@@ -23,12 +23,12 @@ const SHORTCUT_BY_OUTER_INDEX = {
 }
 
 const YUT_RESULTS = [
-  { name: 'backdo', label: 'Backdo', steps: -1, grantsExtraTurn: false, weight: 1 },
-  { name: 'do', label: 'Do', steps: 1, grantsExtraTurn: false, weight: 4 },
-  { name: 'gae', label: 'Gae', steps: 2, grantsExtraTurn: false, weight: 6 },
-  { name: 'geol', label: 'Geol', steps: 3, grantsExtraTurn: false, weight: 4 },
-  { name: 'yut', label: 'Yut', steps: 4, grantsExtraTurn: true, weight: 1 },
-  { name: 'mo', label: 'Mo', steps: 5, grantsExtraTurn: true, weight: 1 },
+  { name: 'backdo', label: '빽도', steps: -1, grantsExtraTurn: false, weight: 1 },
+  { name: 'do', label: '도', steps: 1, grantsExtraTurn: false, weight: 4 },
+  { name: 'gae', label: '개', steps: 2, grantsExtraTurn: false, weight: 6 },
+  { name: 'geol', label: '걸', steps: 3, grantsExtraTurn: false, weight: 4 },
+  { name: 'yut', label: '윷', steps: 4, grantsExtraTurn: true, weight: 1 },
+  { name: 'mo', label: '모', steps: 5, grantsExtraTurn: true, weight: 1 },
 ]
 
 const weightedYutPool = YUT_RESULTS.flatMap((result) => Array.from({ length: result.weight }, () => result))
@@ -49,7 +49,8 @@ const io = new Server(httpServer, {
 const rooms = new Map()
 const now = () => new Date().toISOString()
 
-const createInitialGameState = (maxPlayers) => ({
+const createInitialGameState = (maxPlayers, gameType = 'yut') => ({
+  gameType,
   status: 'waiting',
   maxPlayers,
   players: [],
@@ -94,6 +95,10 @@ const sanitizeMaxPlayers = (maxPlayers) => {
   const parsed = Number(maxPlayers)
   if (!Number.isInteger(parsed)) return 2
   return Math.min(5, Math.max(2, parsed))
+}
+
+const sanitizeGameType = (gameType) => {
+  return gameType === 'word' ? 'word' : 'yut'
 }
 
 const getPublicPlayer = (player) => ({
@@ -161,6 +166,7 @@ const getPublicRoom = (room) => {
 
   return {
     code: room.code,
+    gameType: room.gameType,
     hostId: room.hostId,
     players: room.players.map(getPublicPlayer),
     gameState: room.gameState,
@@ -369,7 +375,7 @@ const leaveCurrentRoom = (socket) => {
     room.gameState.turn.pendingMoves = []
     room.gameState.lastAction = {
       type: 'player-left',
-      message: 'A player left. The game returned to waiting state.',
+      message: '플레이어가 나가서 게임이 대기 상태로 돌아갔습니다.',
       at: now(),
     }
   }
@@ -389,12 +395,18 @@ app.get('/health', (_req, res) => {
 io.on('connection', (socket) => {
   socket.data.roomCode = null
 
-  socket.on('createRoom', ({ nickname, maxPlayers } = {}, callback) => {
+  socket.on('createRoom', ({ nickname, maxPlayers, gameType } = {}, callback) => {
     const safeNickname = sanitizeNickname(nickname)
     const safeMaxPlayers = sanitizeMaxPlayers(maxPlayers)
+    const safeGameType = sanitizeGameType(gameType)
 
     if (!safeNickname) {
-      callback?.({ ok: false, error: 'Enter a nickname.' })
+      callback?.({ ok: false, error: '닉네임을 입력해주세요.' })
+      return
+    }
+
+    if (safeGameType !== 'yut') {
+      callback?.({ ok: false, error: '아직 준비 중인 게임입니다.' })
       return
     }
 
@@ -409,9 +421,10 @@ io.on('connection', (socket) => {
     }
     const room = {
       code: roomCode,
+      gameType: safeGameType,
       hostId: socket.id,
       players: [player],
-      gameState: createInitialGameState(safeMaxPlayers),
+      gameState: createInitialGameState(safeMaxPlayers, safeGameType),
     }
 
     syncGamePlayers(room)
@@ -433,22 +446,22 @@ io.on('connection', (socket) => {
     const room = rooms.get(safeRoomCode)
 
     if (!safeNickname) {
-      callback?.({ ok: false, error: 'Enter a nickname.' })
+      callback?.({ ok: false, error: '닉네임을 입력해주세요.' })
       return
     }
 
     if (!room) {
-      callback?.({ ok: false, error: 'Room does not exist.' })
+      callback?.({ ok: false, error: '존재하지 않는 방입니다.' })
       return
     }
 
     if (room.gameState.status === 'playing' || room.gameState.status === 'finished') {
-      callback?.({ ok: false, error: 'The game already started.' })
+      callback?.({ ok: false, error: '이미 게임이 시작된 방입니다.' })
       return
     }
 
     if (room.players.length >= room.gameState.maxPlayers) {
-      callback?.({ ok: false, error: 'Room is full.' })
+      callback?.({ ok: false, error: '방이 가득 찼습니다.' })
       return
     }
 
@@ -478,17 +491,17 @@ io.on('connection', (socket) => {
     const room = findCurrentRoom(socket)
 
     if (!room) {
-      callback?.({ ok: false, error: 'You are not in a room.' })
+      callback?.({ ok: false, error: '참가 중인 방이 없습니다.' })
       return
     }
 
     if (room.hostId !== socket.id) {
-      callback?.({ ok: false, error: 'Only host can start the game.' })
+      callback?.({ ok: false, error: '방장만 게임을 시작할 수 있습니다.' })
       return
     }
 
     if (room.players.length !== room.gameState.maxPlayers) {
-      callback?.({ ok: false, error: 'All seats must be filled before start.' })
+      callback?.({ ok: false, error: '최대 인원이 모두 들어와야 시작할 수 있습니다.' })
       return
     }
 
@@ -496,7 +509,7 @@ io.on('connection', (socket) => {
     room.gameState.winnerPlayerId = null
     room.gameState.board.pieces = createPieces(room.players)
     setTurnPlayer(room.gameState, 0)
-    touchGameState(room, 'Game started.', 'start')
+    touchGameState(room, '게임이 시작되었습니다.', 'start')
     emitGameStateUpdated(room)
     callback?.({ ok: true, gameState: room.gameState })
   })
@@ -505,24 +518,24 @@ io.on('connection', (socket) => {
     const room = findCurrentRoom(socket)
 
     if (!room) {
-      callback?.({ ok: false, error: 'You are not in a room.' })
+      callback?.({ ok: false, error: '참가 중인 방이 없습니다.' })
       return
     }
 
     const gameState = room.gameState
 
     if (gameState.status !== 'playing') {
-      callback?.({ ok: false, error: 'Game is not playing.' })
+      callback?.({ ok: false, error: '게임이 진행 중이 아닙니다.' })
       return
     }
 
     if (gameState.turn.currentPlayerId !== socket.id) {
-      callback?.({ ok: false, error: 'It is not your turn.' })
+      callback?.({ ok: false, error: '현재 턴이 아닙니다.' })
       return
     }
 
     if (!gameState.turn.mustThrow) {
-      callback?.({ ok: false, error: 'Move a piece first.' })
+      callback?.({ ok: false, error: '먼저 말을 이동해주세요.' })
       return
     }
 
@@ -538,10 +551,10 @@ io.on('connection', (socket) => {
 
     if (gameState.turn.legalMoves[result.id]?.length === 0) {
       gameState.turn.pendingMoves = gameState.turn.pendingMoves.filter((move) => move.id !== result.id)
-      touchGameState(room, `${result.label} rolled, but no piece can move.`, 'throw')
+      touchGameState(room, `${result.label}가 나왔지만 움직일 수 있는 말이 없습니다.`, 'throw')
       advanceTurn(gameState)
     } else {
-      touchGameState(room, `${result.label} rolled.`, 'throw')
+      touchGameState(room, `${result.label}가 나왔습니다.`, 'throw')
     }
 
     emitGameStateUpdated(room)
@@ -552,24 +565,24 @@ io.on('connection', (socket) => {
     const room = findCurrentRoom(socket)
 
     if (!room) {
-      callback?.({ ok: false, error: 'You are not in a room.' })
+      callback?.({ ok: false, error: '참가 중인 방이 없습니다.' })
       return
     }
 
     const gameState = room.gameState
 
     if (gameState.status !== 'playing') {
-      callback?.({ ok: false, error: 'Game is not playing.' })
+      callback?.({ ok: false, error: '게임이 진행 중이 아닙니다.' })
       return
     }
 
     if (gameState.turn.currentPlayerId !== socket.id) {
-      callback?.({ ok: false, error: 'It is not your turn.' })
+      callback?.({ ok: false, error: '현재 턴이 아닙니다.' })
       return
     }
 
     if (gameState.turn.mustThrow) {
-      callback?.({ ok: false, error: 'Throw yut first.' })
+      callback?.({ ok: false, error: '먼저 윷을 던져주세요.' })
       return
     }
 
@@ -577,17 +590,17 @@ io.on('connection', (socket) => {
     const piece = gameState.board.pieces.find((target) => target.id === pieceId)
 
     if (!move) {
-      callback?.({ ok: false, error: 'Invalid throw result.' })
+      callback?.({ ok: false, error: '사용할 수 없는 윷 결과입니다.' })
       return
     }
 
     if (!piece || piece.playerId !== socket.id) {
-      callback?.({ ok: false, error: 'You can move only your own pieces.' })
+      callback?.({ ok: false, error: '자신의 말만 이동할 수 있습니다.' })
       return
     }
 
     if (!canMovePiece(piece, move.steps)) {
-      callback?.({ ok: false, error: 'That piece cannot use this throw.' })
+      callback?.({ ok: false, error: '이 윷 결과로 이동할 수 없는 말입니다.' })
       return
     }
 
@@ -595,16 +608,16 @@ io.on('connection', (socket) => {
 
     const { capturedPieces, movedPieces } = applyMove(gameState, piece, move)
     const player = room.players.find((target) => target.id === socket.id)
-    const stackText = movedPieces.length > 1 ? ` Moved ${movedPieces.length} stacked pieces.` : ''
-    const captureText = capturedPieces.length > 0 ? ` Captured ${capturedPieces.length} enemy piece(s).` : ''
+    const stackText = movedPieces.length > 1 ? ` 업힌 말 ${movedPieces.length}개가 함께 이동했습니다.` : ''
+    const captureText = capturedPieces.length > 0 ? ` 상대 말 ${capturedPieces.length}개를 잡았습니다.` : ''
 
     if (gameState.status === 'finished') {
-      touchGameState(room, `${player?.nickname ?? 'Player'} won.`, 'finish')
+      touchGameState(room, `${player?.nickname ?? '플레이어'}님이 승리했습니다.`, 'finish')
     } else if (gameState.turn.pendingMoves.length === 0) {
       advanceTurn(gameState)
-      touchGameState(room, `Moved with ${move.label}.${stackText}${captureText}`, 'move')
+      touchGameState(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
     } else {
-      touchGameState(room, `Moved with ${move.label}.${stackText}${captureText}`, 'move')
+      touchGameState(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
     }
 
     emitGameStateUpdated(room)
@@ -612,7 +625,7 @@ io.on('connection', (socket) => {
   })
 
   socket.on('updateGameState', (_payload = {}, callback) => {
-    callback?.({ ok: false, error: 'Game state can only be changed by server game events.' })
+    callback?.({ ok: false, error: '게임 상태는 서버 게임 이벤트로만 변경할 수 있습니다.' })
   })
 
   socket.on('leaveRoom', (callback) => {

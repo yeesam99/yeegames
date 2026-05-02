@@ -2,14 +2,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { io, type Socket } from 'socket.io-client'
 
+type GameType = 'yut' | 'word'
+type RouteName = 'outer' | 'shortcutA' | 'shortcutB' | 'shortcutC'
+
 type Player = {
   id: string
   nickname: string
   isHost: boolean
   color: string
 }
-
-type RouteName = 'outer' | 'shortcutA' | 'shortcutB' | 'shortcutC'
 
 type YutMove = {
   id: string
@@ -29,6 +30,7 @@ type YutPiece = {
 }
 
 type GameState = {
+  gameType?: GameType
   status: 'waiting' | 'ready' | 'playing' | 'finished'
   maxPlayers: number
   players: Player[]
@@ -55,6 +57,7 @@ type GameState = {
 
 type RoomPayload = {
   code: string
+  gameType?: GameType
   hostId: string
   players: Player[]
   gameState: GameState
@@ -73,6 +76,11 @@ type BoardPoint = {
 const SERVER_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:4000'
 const CANVAS_SIZE = 720
 const PIECE_RADIUS = 13
+
+const games: Array<{ id: GameType; label: string; status: string }> = [
+  { id: 'yut', label: '윷놀이', status: 'YUT' },
+  { id: 'word', label: '끝말잇기', status: '준비중' },
+]
 
 const pointByKey: Record<string, BoardPoint> = {
   O0: { x: 610, y: 610 },
@@ -117,14 +125,16 @@ const routeLines: string[][] = [
 const socket: Socket = io(SERVER_URL, { autoConnect: true })
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const selectedGame = ref<GameType>('yut')
 const nickname = ref('')
 const roomCodeInput = ref('')
 const maxPlayers = ref(2)
 const currentRoomCode = ref('')
 const hostId = ref('')
+const roomGameType = ref<GameType>('yut')
 const players = ref<Player[]>([])
 const gameState = ref<GameState | null>(null)
-const connectionStatus = ref('Connecting to server...')
+const connectionStatus = ref('서버 연결 중...')
 const message = ref('')
 const selectedMoveId = ref('')
 const isCreating = ref(false)
@@ -137,9 +147,19 @@ const myPlayer = computed(() => players.value.find((player) => player.id === soc
 const isHost = computed(() => hostId.value === socket.id)
 const currentPlayer = computed(() => players.value.find((player) => player.id === gameState.value?.turn.currentPlayerId) ?? null)
 const winner = computed(() => players.value.find((player) => player.id === gameState.value?.winnerPlayerId) ?? null)
-const canCreateRoom = computed(() => nickname.value.trim().length >= 2 && socket.connected && !isCreating.value)
+const ruleText = computed(() => `${maxPlayers.value}인전. 빽도 사용, 잡기 추가 턴, 업기를 적용합니다.`)
+const isYutSelected = computed(() => selectedGame.value === 'yut')
+const canUseSelectedGame = computed(() => isYutSelected.value)
+const canCreateRoom = computed(
+  () => nickname.value.trim().length >= 2 && socket.connected && !isCreating.value && canUseSelectedGame.value,
+)
 const canJoinRoom = computed(
-  () => nickname.value.trim().length >= 2 && normalizedRoomCode.value.length >= 4 && socket.connected && !isJoining.value,
+  () =>
+    nickname.value.trim().length >= 2 &&
+    normalizedRoomCode.value.length >= 4 &&
+    socket.connected &&
+    !isJoining.value &&
+    canUseSelectedGame.value,
 )
 const canStartGame = computed(
   () =>
@@ -162,6 +182,7 @@ const setRoom = (room: RoomPayload) => {
   currentRoomCode.value = room.code
   roomCodeInput.value = room.code
   hostId.value = room.hostId
+  roomGameType.value = room.gameType ?? room.gameState.gameType ?? 'yut'
   players.value = room.players
   gameState.value = room.gameState
   selectedMoveId.value = room.gameState.turn.pendingMoves[0]?.id ?? ''
@@ -171,26 +192,32 @@ const setMessageFromResponse = (response: ServerResponse, fallback: string) => {
   if (!response.ok) message.value = response.error ?? fallback
 }
 
+// Game buttons change only the lobby form. Non-YUT games are intentionally blocked for now.
+const selectGame = (gameType: GameType) => {
+  selectedGame.value = gameType
+  message.value = gameType === 'word' ? '끝말잇기는 아직 준비중입니다.' : ''
+}
+
 socket.on('connect', () => {
-  connectionStatus.value = 'Server connected'
+  connectionStatus.value = '서버 연결됨'
 })
 
 socket.on('disconnect', () => {
-  connectionStatus.value = 'Server disconnected'
+  connectionStatus.value = '서버 연결 끊김'
 })
 
 socket.on('connect_error', () => {
-  connectionStatus.value = 'Cannot connect to server'
+  connectionStatus.value = '서버에 연결할 수 없습니다'
 })
 
 socket.on('roomCreated', (room: RoomPayload) => {
   setRoom(room)
-  message.value = `Room ${room.code} created.`
+  message.value = `방 ${room.code}를 만들었습니다.`
 })
 
 socket.on('roomJoined', (room: RoomPayload) => {
   setRoom(room)
-  message.value = `Joined room ${room.code}.`
+  message.value = `방 ${room.code}에 참가했습니다.`
 })
 
 socket.on('roomError', ({ message: errorMessage }: { message: string }) => {
@@ -209,27 +236,50 @@ socket.on('gameStateUpdated', ({ gameState: nextGameState }: { roomCode: string;
 })
 
 const createRoom = () => {
-  if (!canCreateRoom.value) return
+  if (!canCreateRoom.value) {
+    message.value = selectedGame.value === 'word' ? '끝말잇기는 아직 준비중입니다.' : message.value
+    return
+  }
+
   isCreating.value = true
   message.value = ''
 
-  socket.emit('createRoom', { nickname: nickname.value.trim(), maxPlayers: maxPlayers.value }, (response: ServerResponse<{ room?: RoomPayload }>) => {
-    isCreating.value = false
-    setMessageFromResponse(response, 'Could not create room.')
-    if (response.ok && response.room) setRoom(response.room)
-  })
+  socket.emit(
+    'createRoom',
+    {
+      gameType: selectedGame.value,
+      nickname: nickname.value.trim(),
+      maxPlayers: maxPlayers.value,
+    },
+    (response: ServerResponse<{ room?: RoomPayload }>) => {
+      isCreating.value = false
+      setMessageFromResponse(response, '방을 만들지 못했습니다.')
+      if (response.ok && response.room) setRoom(response.room)
+    },
+  )
 }
 
 const joinRoom = () => {
-  if (!canJoinRoom.value) return
+  if (!canJoinRoom.value) {
+    message.value = selectedGame.value === 'word' ? '끝말잇기는 아직 준비중입니다.' : message.value
+    return
+  }
+
   isJoining.value = true
   message.value = ''
 
-  socket.emit('joinRoom', { nickname: nickname.value.trim(), roomCode: normalizedRoomCode.value }, (response: ServerResponse<{ room?: RoomPayload }>) => {
-    isJoining.value = false
-    setMessageFromResponse(response, 'Could not join room.')
-    if (response.ok && response.room) setRoom(response.room)
-  })
+  socket.emit(
+    'joinRoom',
+    {
+      nickname: nickname.value.trim(),
+      roomCode: normalizedRoomCode.value,
+    },
+    (response: ServerResponse<{ room?: RoomPayload }>) => {
+      isJoining.value = false
+      setMessageFromResponse(response, '방에 참가하지 못했습니다.')
+      if (response.ok && response.room) setRoom(response.room)
+    },
+  )
 }
 
 const startGame = () => {
@@ -239,7 +289,7 @@ const startGame = () => {
 
   socket.emit('startGame', (response: ServerResponse<{ gameState?: GameState }>) => {
     isStarting.value = false
-    setMessageFromResponse(response, 'Could not start game.')
+    setMessageFromResponse(response, '게임을 시작하지 못했습니다.')
     if (response.ok && response.gameState) gameState.value = response.gameState
   })
 }
@@ -251,7 +301,7 @@ const throwYut = () => {
 
   socket.emit('throwYut', (response: ServerResponse<{ gameState?: GameState }>) => {
     isThrowing.value = false
-    setMessageFromResponse(response, 'Could not throw yut.')
+    setMessageFromResponse(response, '윷을 던지지 못했습니다.')
     if (response.ok && response.gameState) {
       gameState.value = response.gameState
       selectedMoveId.value = response.gameState.turn.pendingMoves[0]?.id ?? ''
@@ -264,7 +314,7 @@ const movePiece = (pieceId: string) => {
   if (!move) return
 
   socket.emit('movePiece', { pieceId, throwId: move.id }, (response: ServerResponse<{ gameState?: GameState }>) => {
-    setMessageFromResponse(response, 'Could not move piece.')
+    setMessageFromResponse(response, '말을 이동하지 못했습니다.')
     if (response.ok && response.gameState) gameState.value = response.gameState
   })
 }
@@ -273,10 +323,11 @@ const leaveRoom = () => {
   socket.emit('leaveRoom', () => {
     currentRoomCode.value = ''
     hostId.value = ''
+    roomGameType.value = 'yut'
     players.value = []
     gameState.value = null
     selectedMoveId.value = ''
-    message.value = 'Left room.'
+    message.value = '방에서 나왔습니다.'
   })
 }
 
@@ -363,8 +414,8 @@ const drawBoard = () => {
   ctx.fillStyle = '#121826'
   ctx.font = '700 16px sans-serif'
   ctx.textAlign = 'center'
-  ctx.fillText('FINISH', 350, 320)
-  ctx.fillText('HOME', 350, 405)
+  ctx.fillText('완주', 350, 320)
+  ctx.fillText('대기 말', 350, 405)
 
   const activeGroups = new Map<string, YutPiece[]>()
   const loosePieces: YutPiece[] = []
@@ -394,10 +445,7 @@ const drawBoard = () => {
   }
 
   for (const piece of loosePieces) drawPiece(piece)
-
-  for (const group of activeGroups.values()) {
-    drawPiece(group[0]!, 0, 0, group.length)
-  }
+  for (const group of activeGroups.values()) drawPiece(group[0]!, 0, 0, group.length)
 }
 
 const handleCanvasClick = (event: MouseEvent) => {
@@ -443,75 +491,93 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="app-page">
-    <section class="lobby-panel" aria-labelledby="lobby-title">
-      <div class="brand-row">
-        <div class="brand-mark">YG</div>
-        <span>Yee Games</span>
-      </div>
+  <main class="app-shell">
+    <header class="top-logo" aria-label="YUT 로고">
+      <span>Y</span>
+      <strong>YUT</strong>
+    </header>
 
-      <div class="panel-header">
-        <p class="eyebrow">Yutnori Lobby</p>
-        <h1 id="lobby-title">Realtime Yutnori</h1>
-        <p>Create a 2-5 player room. The server owns turns, routes, captures, stacking, and movement.</p>
-      </div>
-
-      <div class="server-card">
-        <span class="status-dot" :class="{ online: socket.connected }"></span>
-        <div>
-          <strong>{{ connectionStatus }}</strong>
-          <p>{{ SERVER_URL }}</p>
-        </div>
-      </div>
-
-      <form class="room-form" @submit.prevent="joinRoom">
-        <label class="field">
-          <span>Nickname</span>
-          <input v-model.trim="nickname" type="text" autocomplete="nickname" maxlength="16" placeholder="YeePlayer" />
-          <small>Use at least 2 characters.</small>
-        </label>
-
-        <label class="field">
-          <span>Max players</span>
-          <select v-model.number="maxPlayers" :disabled="Boolean(currentRoomCode)">
-            <option v-for="count in [2, 3, 4, 5]" :key="count" :value="count">{{ count }} players</option>
-          </select>
-          <small>Chosen when creating a room.</small>
-        </label>
-
-        <label class="field">
-          <span>Room code</span>
-          <input v-model.trim="roomCodeInput" type="text" inputmode="text" maxlength="8" placeholder="A7K29Q" />
-          <small>Join with a code from another player.</small>
-        </label>
-
-        <div class="action-row">
-          <button class="primary-button" type="button" :disabled="!canCreateRoom" @click="createRoom">
-            {{ isCreating ? 'Creating...' : 'Create room' }}
-          </button>
-          <button class="secondary-button" type="submit" :disabled="!canJoinRoom">
-            {{ isJoining ? 'Joining...' : 'Join room' }}
+    <section class="entry-stage" aria-labelledby="entry-title">
+      <div class="entry-card">
+        <div class="game-tabs" aria-label="게임 선택">
+          <button
+            v-for="game in games"
+            :key="game.id"
+            class="game-tab"
+            :class="{ active: selectedGame === game.id }"
+            type="button"
+            @click="selectGame(game.id)"
+          >
+            <span>{{ game.label }}</span>
+            <small>{{ game.status }}</small>
           </button>
         </div>
-      </form>
 
-      <p v-if="message" class="message" role="status">{{ message }}</p>
+        <div class="entry-heading">
+          <p class="eyebrow">Game Lobby</p>
+          <h1 id="entry-title">{{ isYutSelected ? '윷놀이 방 입장' : '끝말잇기' }}</h1>
+          <p>{{ isYutSelected ? '방을 만들거나 코드로 입장하세요.' : '이 게임은 아직 준비중입니다.' }}</p>
+        </div>
+
+        <form v-if="isYutSelected" class="entry-form" @submit.prevent="joinRoom">
+          <label class="field">
+            <span>닉네임</span>
+            <input v-model.trim="nickname" type="text" autocomplete="nickname" maxlength="16" placeholder="닉네임 입력" />
+          </label>
+
+          <label class="field">
+            <span>목표 인원</span>
+            <select v-model.number="maxPlayers" :disabled="Boolean(currentRoomCode)">
+              <option v-for="count in [2, 3, 4, 5]" :key="count" :value="count">{{ count }}명</option>
+            </select>
+          </label>
+
+          <div class="rule-box">
+            {{ ruleText }}
+          </div>
+
+          <label class="field">
+            <span>방 코드</span>
+            <input v-model.trim="roomCodeInput" type="text" inputmode="text" maxlength="8" placeholder="방 코드 입력" />
+          </label>
+
+          <div class="entry-actions">
+            <button class="dark-button" type="button" :disabled="!canCreateRoom" @click="createRoom">
+              {{ isCreating ? '생성 중...' : '방 만들기' }}
+            </button>
+            <button class="light-button" type="submit" :disabled="!canJoinRoom">
+              {{ isJoining ? '입장 중...' : '입장' }}
+            </button>
+          </div>
+        </form>
+
+        <div v-else class="coming-soon">
+          <strong>준비중</strong>
+          <p>끝말잇기 로비는 다음 단계에서 연결할 예정입니다.</p>
+        </div>
+
+        <p class="server-line">
+          <span :class="{ online: socket.connected }"></span>
+          {{ connectionStatus }}
+        </p>
+
+        <p v-if="message" class="message" role="status">{{ message }}</p>
+      </div>
     </section>
 
-    <section class="game-panel" aria-label="Yutnori game">
+    <section v-if="currentRoomCode" class="game-panel" aria-label="윷놀이 게임">
       <header class="game-header">
         <div>
-          <p class="eyebrow">{{ currentRoomCode || 'NO ROOM' }}</p>
-          <h2>Yutnori</h2>
-          <p v-if="gameState">{{ players.length }} / {{ gameState.maxPlayers }} players · {{ gameState.status }}</p>
-          <p v-else>Create or join a room to sync game state.</p>
+          <p class="eyebrow">{{ currentRoomCode }} · {{ roomGameType.toUpperCase() }}</p>
+          <h2>윷놀이</h2>
+          <p v-if="gameState">{{ players.length }} / {{ gameState.maxPlayers }}명 · {{ gameState.status }}</p>
         </div>
 
         <div class="header-actions">
-          <button class="primary-button compact" type="button" :disabled="!canStartGame" @click="startGame">
-            {{ isStarting ? 'Starting...' : 'Start game' }}
+          <button class="dark-button compact" type="button" :disabled="!canStartGame" @click="startGame">
+            {{ isStarting ? '시작 중...' : '게임 시작' }}
           </button>
-          <button v-if="currentRoomCode" class="leave-button compact" type="button" @click="leaveRoom">Leave</button>
+          <button class="danger-button compact" type="button" @click="leaveRoom">나가기</button>
         </div>
       </header>
 
@@ -519,32 +585,30 @@ onBeforeUnmount(() => {
         <canvas ref="canvasRef" class="game-canvas" width="720" height="720" @click="handleCanvasClick"></canvas>
 
         <aside class="state-panel">
-          <section class="players-card">
+          <section class="side-card">
             <div class="card-header">
-              <h3>Players</h3>
-              <span>{{ players.length }}</span>
+              <h3>플레이어</h3>
+              <span>{{ players.length }}명</span>
             </div>
-
-            <ul v-if="players.length" class="player-list">
+            <ul class="player-list">
               <li v-for="player in players" :key="player.id" :class="{ current: player.id === gameState?.turn.currentPlayerId }">
                 <i :style="{ background: player.color }"></i>
                 <span>{{ player.nickname }}</span>
-                <strong v-if="player.isHost">Host</strong>
+                <strong v-if="player.isHost">방장</strong>
               </li>
             </ul>
-            <p v-else class="empty-text">No players yet.</p>
           </section>
 
-          <section class="turn-card">
-            <h3>Turn</h3>
-            <p>{{ currentPlayer?.nickname ?? 'Waiting' }}</p>
-            <button class="primary-button" type="button" :disabled="!canThrowYut" @click="throwYut">
-              {{ isThrowing ? 'Throwing...' : 'Throw yut' }}
+          <section class="side-card">
+            <h3>현재 턴</h3>
+            <p>{{ currentPlayer?.nickname ?? '대기 중' }}</p>
+            <button class="dark-button full" type="button" :disabled="!canThrowYut" @click="throwYut">
+              {{ isThrowing ? '던지는 중...' : '윷 던지기' }}
             </button>
           </section>
 
-          <section class="moves-card">
-            <h3>Pending throws</h3>
+          <section class="side-card">
+            <h3>사용할 윷 결과</h3>
             <div v-if="pendingMoves.length" class="move-list">
               <button
                 v-for="move in pendingMoves"
@@ -557,14 +621,14 @@ onBeforeUnmount(() => {
                 {{ move.label }} {{ move.steps > 0 ? `+${move.steps}` : move.steps }}
               </button>
             </div>
-            <p v-else class="empty-text">Throw yut to get moves.</p>
+            <p v-else class="muted">윷을 던지면 결과가 표시됩니다.</p>
           </section>
 
-          <section class="log-card">
-            <h3>Log</h3>
-            <p>{{ gameState?.lastAction?.message ?? 'No events yet.' }}</p>
-            <p v-if="winner" class="winner-text">{{ winner.nickname }} wins!</p>
-            <p v-if="myPlayer" class="empty-text">Your pieces have a dark outline. Stacks show x2, x3, x4.</p>
+          <section class="side-card">
+            <h3>게임 로그</h3>
+            <p>{{ gameState?.lastAction?.message ?? '아직 이벤트가 없습니다.' }}</p>
+            <p v-if="winner" class="winner-text">{{ winner.nickname }}님 승리!</p>
+            <p v-if="myPlayer" class="muted">내 말은 진한 테두리로 표시됩니다.</p>
           </section>
         </aside>
       </div>
@@ -573,53 +637,95 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.app-page {
-  display: grid;
-  grid-template-columns: 380px minmax(0, 1fr);
+.app-shell {
   min-height: 100vh;
-  background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.12), transparent 40%),
-    linear-gradient(315deg, rgba(251, 113, 133, 0.12), transparent 46%),
-    #f7f8fc;
-}
-
-.lobby-panel,
-.game-panel {
-  display: flex;
-  flex-direction: column;
-}
-
-.lobby-panel {
-  gap: 26px;
-  border-right: 1px solid rgba(18, 24, 38, 0.08);
   background: #ffffff;
-  padding: 36px;
+  color: #111111;
 }
 
-.brand-row {
-  display: flex;
+.top-logo {
+  position: fixed;
+  top: 28px;
+  left: 32px;
+  z-index: 10;
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
-  color: #121826;
-  font-size: 1.1rem;
+  gap: 10px;
+}
+
+.top-logo span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 2px solid #111111;
+  border-radius: 10px;
+  font-weight: 950;
+}
+
+.top-logo strong {
+  font-size: 1rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+
+.entry-stage {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 96px 20px 56px;
+}
+
+.entry-card {
+  width: min(100%, 440px);
+  border: 2px solid #111111;
+  border-radius: 28px;
+  background: #ffffff;
+  padding: 18px;
+  box-shadow: 0 18px 0 #111111;
+}
+
+.game-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 26px;
+}
+
+.game-tab {
+  display: grid;
+  min-height: 64px;
+  border: 2px solid #111111;
+  border-radius: 18px;
+  background: #ffffff;
+  color: #111111;
+  cursor: pointer;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.game-tab.active {
+  background: #2f2f2f;
+  color: #ffffff;
+}
+
+.game-tab span,
+.game-tab small {
   font-weight: 900;
 }
 
-.brand-mark {
-  display: grid;
-  width: 54px;
-  height: 54px;
-  place-items: center;
-  border-radius: 8px;
-  background: #121826;
-  color: #fff;
-  font-weight: 900;
+.game-tab small {
+  opacity: 0.72;
+}
+
+.entry-heading {
+  margin-bottom: 22px;
 }
 
 .eyebrow {
-  margin-bottom: 10px;
-  color: #0f8f68;
-  font-size: 0.78rem;
+  margin-bottom: 8px;
+  color: #666666;
+  font-size: 0.76rem;
   font-weight: 900;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -627,173 +733,165 @@ onBeforeUnmount(() => {
 
 h1,
 h2,
-h3 {
-  color: #121826;
-  font-weight: 950;
+h3,
+p {
+  margin: 0;
 }
 
 h1 {
-  font-size: 2.5rem;
-  line-height: 1.06;
+  font-size: 2rem;
+  font-weight: 950;
+  letter-spacing: 0;
 }
 
 h2 {
   font-size: clamp(2rem, 5vw, 4rem);
-  line-height: 1;
+  font-weight: 950;
 }
 
 h3 {
   font-size: 1rem;
+  font-weight: 950;
 }
 
-.panel-header p:last-child,
-.game-header p,
-.empty-text {
-  color: #6b7280;
+.entry-heading p,
+.muted,
+.server-line {
+  color: #666666;
 }
 
-.server-card,
-.players-card,
-.turn-card,
-.moves-card,
-.log-card {
-  border: 1px solid rgba(18, 24, 38, 0.1);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 18px 52px rgba(31, 41, 55, 0.08);
-}
-
-.server-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 16px;
-}
-
-.server-card strong {
-  color: #121826;
-  font-weight: 900;
-}
-
-.server-card p {
-  color: #6b7280;
-  overflow-wrap: anywhere;
-}
-
-.status-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: #f43f5e;
-}
-
-.status-dot.online {
-  background: #10b981;
-}
-
-.room-form {
+.entry-form {
   display: grid;
-  gap: 16px;
+  gap: 14px;
 }
 
 .field {
   display: grid;
   gap: 8px;
-  color: #283246;
-  font-weight: 850;
+}
+
+.field span {
+  font-weight: 900;
 }
 
 .field input,
 .field select {
   width: 100%;
-  height: 50px;
-  border: 1px solid #d7dce5;
-  border-radius: 8px;
-  background: #fbfcfe;
-  color: #121826;
+  height: 52px;
+  border: 2px solid #111111;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #111111;
   font: inherit;
-  padding: 0 14px;
+  font-weight: 800;
   outline: none;
+  padding: 0 14px;
 }
 
 .field input:focus,
 .field select:focus {
-  border-color: #0f8f68;
-  background: #ffffff;
-  box-shadow: 0 0 0 4px rgba(15, 143, 104, 0.12);
+  box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.12);
 }
 
-.field small {
-  color: #6b7280;
-  font-size: 0.82rem;
+.rule-box,
+.coming-soon {
+  border: 2px solid #111111;
+  border-radius: 18px;
+  background: #f6f6f6;
+  padding: 14px;
+  font-weight: 900;
 }
 
-.action-row,
+.coming-soon {
+  display: grid;
+  gap: 8px;
+}
+
+.coming-soon p {
+  color: #666666;
+}
+
+.entry-actions,
 .header-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
 
-.primary-button,
-.secondary-button,
-.leave-button,
+.dark-button,
+.light-button,
+.danger-button,
 .move-button {
-  min-height: 50px;
-  border-radius: 8px;
+  min-height: 52px;
+  border: 2px solid #111111;
+  border-radius: 16px;
   cursor: pointer;
   font: inherit;
-  font-weight: 900;
+  font-weight: 950;
 }
 
-.primary-button {
-  border: 0;
-  background: #121826;
+.dark-button {
+  background: #111111;
   color: #ffffff;
 }
 
-.secondary-button {
-  border: 1px solid #121826;
+.light-button,
+.move-button {
   background: #ffffff;
-  color: #121826;
+  color: #111111;
 }
 
-.leave-button {
-  border: 1px solid #e11d48;
+.danger-button {
+  border-color: #be123c;
   background: #fff1f2;
   color: #be123c;
 }
 
 .compact {
-  min-height: 42px;
-  padding: 0 14px;
+  min-height: 44px;
+  padding: 0 16px;
 }
 
-.primary-button:hover:not(:disabled) {
-  background: #0f8f68;
-}
-
-.secondary-button:hover:not(:disabled),
-.move-button:hover {
-  border-color: #0f8f68;
-  color: #0f8f68;
+.full {
+  width: 100%;
 }
 
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.42;
 }
 
-.message {
-  border-radius: 8px;
-  background: #e9fbf4;
-  color: #087252;
-  padding: 13px 14px;
+.server-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 0.88rem;
   font-weight: 800;
 }
 
+.server-line span {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #e11d48;
+}
+
+.server-line span.online {
+  background: #16a34a;
+}
+
+.message {
+  margin-top: 12px;
+  border: 2px solid #111111;
+  border-radius: 16px;
+  background: #f7f7f7;
+  padding: 12px;
+  font-weight: 900;
+}
+
 .game-panel {
-  gap: 22px;
+  border-top: 2px solid #111111;
   padding: 32px;
 }
 
@@ -802,6 +900,11 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
+  margin-bottom: 22px;
+}
+
+.game-header p {
+  color: #666666;
 }
 
 .board-layout {
@@ -811,13 +914,16 @@ button:disabled {
   align-items: start;
 }
 
+.game-canvas,
+.side-card {
+  border: 2px solid #111111;
+  border-radius: 22px;
+  background: #fffaf0;
+}
+
 .game-canvas {
   width: 100%;
   max-width: 780px;
-  border: 1px solid rgba(18, 24, 38, 0.1);
-  border-radius: 8px;
-  background: #fffaf0;
-  box-shadow: 0 18px 52px rgba(31, 41, 55, 0.08);
   cursor: pointer;
 }
 
@@ -826,10 +932,10 @@ button:disabled {
   gap: 14px;
 }
 
-.players-card,
-.turn-card,
-.moves-card,
-.log-card {
+.side-card {
+  display: grid;
+  gap: 12px;
+  background: #ffffff;
   padding: 16px;
 }
 
@@ -843,46 +949,37 @@ button:disabled {
 
 .card-header span,
 .player-list strong {
+  border: 2px solid #111111;
   border-radius: 999px;
-  background: #e8f8f2;
-  color: #087252;
-  padding: 5px 10px;
+  padding: 4px 9px;
   font-size: 0.78rem;
-  font-weight: 900;
+  font-weight: 950;
 }
 
 .player-list {
   display: grid;
   gap: 8px;
-  margin-top: 14px;
   padding: 0;
   list-style: none;
 }
 
 .player-list li {
-  border-radius: 8px;
-  background: #f7f8fc;
-  color: #283246;
-  padding: 12px;
-  font-weight: 850;
+  border: 2px solid #111111;
+  border-radius: 14px;
+  padding: 10px;
+  font-weight: 900;
 }
 
 .player-list li.current {
-  outline: 3px solid rgba(15, 143, 104, 0.18);
+  background: #f6f6f6;
 }
 
 .player-list i {
   width: 14px;
   height: 14px;
+  border: 2px solid #111111;
   border-radius: 999px;
   flex: 0 0 auto;
-}
-
-.turn-card,
-.moves-card,
-.log-card {
-  display: grid;
-  gap: 12px;
 }
 
 .move-list {
@@ -890,16 +987,9 @@ button:disabled {
   gap: 8px;
 }
 
-.move-button {
-  border: 1px solid #d7dce5;
-  background: #ffffff;
-  color: #283246;
-}
-
 .move-button.active {
-  border-color: #0f8f68;
-  background: #f2fbf7;
-  box-shadow: 0 0 0 4px rgba(15, 143, 104, 0.1);
+  background: #2f2f2f;
+  color: #ffffff;
 }
 
 .winner-text {
@@ -907,31 +997,30 @@ button:disabled {
   font-weight: 950;
 }
 
-@media (max-width: 1180px) {
-  .app-page,
+@media (max-width: 980px) {
   .board-layout {
     grid-template-columns: 1fr;
-  }
-
-  .lobby-panel {
-    border-right: 0;
-    border-bottom: 1px solid rgba(18, 24, 38, 0.08);
   }
 }
 
 @media (max-width: 620px) {
-  .lobby-panel,
-  .game-panel {
-    padding: 24px;
+  .top-logo {
+    top: 18px;
+    left: 20px;
   }
 
-  .action-row,
+  .entry-card {
+    border-radius: 22px;
+    box-shadow: 0 10px 0 #111111;
+  }
+
+  .entry-actions,
   .header-actions {
     grid-template-columns: 1fr;
   }
 
-  h1 {
-    font-size: 2.1rem;
+  .game-panel {
+    padding: 24px 16px;
   }
 }
 </style>
