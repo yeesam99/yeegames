@@ -10,6 +10,14 @@ type Player = {
   nickname: string
   isHost: boolean
   color: string
+  pieces?: Array<{
+    id: string
+    position: number | 'finished'
+    finished: boolean
+    route: RouteName
+    state: 'home' | 'active' | 'finished'
+    boardKey?: string
+  }>
 }
 
 type YutMove = {
@@ -31,10 +39,15 @@ type YutPiece = {
 }
 
 type GameState = {
+  roomId?: string
   gameType?: GameType
   status: 'waiting' | 'ready' | 'playing' | 'finished'
   maxPlayers: number
   players: Player[]
+  currentTurnIndex?: number
+  pendingMoves?: YutMove[]
+  extraTurns?: number
+  winner?: string | null
   turn: {
     playerIndex: number
     currentPlayerId: string | null
@@ -44,7 +57,17 @@ type GameState = {
     legalMoves: Record<string, string[]>
   }
   board: {
+    path?: {
+      startKey: string
+      finishKey: string
+      homePosition: -1
+      direction: 'counter-clockwise'
+      routes: Record<RouteName, string[]>
+      shortcutByOuterIndex: Record<number, RouteName>
+      forcedShortcutOnCorner: boolean
+    }
     routes: Record<RouteName, string[]>
+    shortcuts?: Record<number, RouteName>
     pieces: YutPiece[]
   }
   lastAction: {
@@ -57,6 +80,7 @@ type GameState = {
 }
 
 type RoomPayload = {
+  roomId?: string
   code: string
   gameType?: GameType
   hostId: string
@@ -164,12 +188,24 @@ const localRoutes: Record<RouteName, string[]> = {
 
 const isRouteName = (route: string): route is RouteName => route in localRoutes
 
+const getBoardRoutes = (state?: GameState | null): Record<RouteName, string[]> => ({
+  outer: state?.board.routes?.outer ?? localRoutes.outer,
+  shortcutA: state?.board.routes?.shortcutA ?? localRoutes.shortcutA,
+  shortcutB: state?.board.routes?.shortcutB ?? localRoutes.shortcutB,
+  shortcutC: state?.board.routes?.shortcutC ?? localRoutes.shortcutC,
+})
+
+const getBoardRouteLines = (state?: GameState | null) => {
+  const routes = getBoardRoutes(state)
+  return [routes.outer, routes.shortcutA, routes.shortcutB, routes.shortcutC]
+}
+
 const getSafeBoardKey = (piece: YutPiece, state?: GameState | null) => {
   if (piece.state !== 'active') return piece.state
   if (piece.boardKey && pointByKey[piece.boardKey]) return piece.boardKey
 
   const routeName = isRouteName(piece.route) ? piece.route : 'outer'
-  const route = state?.board.routes?.[routeName] ?? localRoutes[routeName]
+  const route = getBoardRoutes(state)[routeName]
   return route[piece.position] && pointByKey[route[piece.position]!] ? route[piece.position]! : 'O0'
 }
 
@@ -214,7 +250,10 @@ const isInRoom = computed(() => Boolean(currentRoomCode.value))
 const myPlayer = computed(() => players.value.find((player) => player.id === socket.id) ?? null)
 const isHost = computed(() => hostId.value === socket.id)
 const currentPlayer = computed(() => players.value.find((player) => player.id === gameState.value?.turn.currentPlayerId) ?? null)
-const winner = computed(() => players.value.find((player) => player.id === gameState.value?.winnerPlayerId) ?? null)
+const winner = computed(() => {
+  const winnerId = gameState.value?.winnerPlayerId ?? gameState.value?.winner
+  return players.value.find((player) => player.id === winnerId) ?? null
+})
 const ruleText = computed(() => `${maxPlayers.value}인전. 빽도 사용, 잡기 추가 턴, 업기를 적용합니다.`)
 const isYutSelected = computed(() => selectedGame.value === 'yut')
 const canUseSelectedGame = computed(() => isYutSelected.value)
@@ -244,7 +283,8 @@ const canThrowYut = computed(
     !isThrowing.value,
 )
 const pendingMoves = computed(() => gameState.value?.turn.pendingMoves ?? [])
-const selectedMove = computed(() => pendingMoves.value.find((move) => move.id === selectedMoveId.value) ?? pendingMoves.value[0])
+// pendingMoves is a server-owned FIFO queue. The client can only use the first result.
+const selectedMove = computed(() => pendingMoves.value[0])
 const movablePieces = computed(() => {
   const move = selectedMove.value
   const state = gameState.value
@@ -309,17 +349,20 @@ socket.on('roomError', ({ message: errorMessage }: { message: string }) => {
   message.value = errorMessage
 })
 
-socket.on('playersUpdated', ({ players: nextPlayers }: { roomCode: string; players: Player[] }) => {
+socket.on('playersUpdated', ({ players: nextPlayers }: { roomId?: string; roomCode: string; players: Player[] }) => {
   players.value = nextPlayers
 })
 
-socket.on('gameStateUpdated', ({ gameState: nextGameState }: { roomCode: string; gameState: GameState }) => {
+socket.on(
+  'gameStateUpdated',
+  ({ gameState: nextGameState }: { roomId?: string; roomCode: string; gameState: GameState }) => {
   gameState.value = normalizeGameState(nextGameState)
   if (!nextGameState.turn.pendingMoves.some((move) => move.id === selectedMoveId.value)) {
     selectedMoveId.value = nextGameState.turn.pendingMoves[0]?.id ?? ''
   }
   nextTick(drawBoard)
-})
+  },
+)
 
 socket.on('systemMessage', (log: LogMessage) => {
   pushLog(log)
@@ -394,7 +437,7 @@ const throwYut = () => {
   isThrowing.value = true
   message.value = ''
 
-  socket.emit('throwYut', (response: ServerResponse<{ gameState?: GameState }>) => {
+  socket.emit('rollYut', (response: ServerResponse<{ gameState?: GameState }>) => {
     isThrowing.value = false
     setMessageFromResponse(response, '윷을 던지지 못했습니다.')
     if (response.ok && response.gameState) {
@@ -450,13 +493,14 @@ const getPieceKey = (piece: YutPiece) => {
 const getPiecePoint = (piece: YutPiece): BoardPoint => {
   if (piece.state === 'home') {
     const playerIndex = players.value.findIndex((player) => player.id === piece.playerId)
-    // Home pieces stay clustered just outside the bottom-right start corner.
+    // Waiting pieces stay just outside the bottom-right start/home corner.
+    // They are offset by player so every player's four pieces remain visible.
     const homeOrigins: BoardPoint[] = [
-      { x: 672, y: 652 },
-      { x: 652, y: 680 },
-      { x: 680, y: 680 },
-      { x: 626, y: 652 },
-      { x: 626, y: 680 },
+      { x: 668, y: 650 },
+      { x: 650, y: 676 },
+      { x: 680, y: 676 },
+      { x: 626, y: 650 },
+      { x: 626, y: 678 },
     ]
     const origin = homeOrigins[playerIndex] ?? homeOrigins[0]!
     return {
@@ -466,10 +510,11 @@ const getPiecePoint = (piece: YutPiece): BoardPoint => {
   }
 
   if (piece.state === 'finished') {
-    // Finished pieces also gather near the bottom-right start/finish corner.
+    // Finished pieces gather inside the bottom-right finish area, separate
+    // from waiting pieces so a completed piece never looks like it disappeared.
     return {
-      x: 632 + (piece.index % 2) * 24,
-      y: 590 + Math.floor(piece.index / 2) * 24,
+      x: 628 + (piece.index % 2) * 24,
+      y: 560 + Math.floor(piece.index / 2) * 24,
     }
   }
 
@@ -498,9 +543,14 @@ const drawBoard = () => {
   ctx.fillStyle = '#fffaf0'
   ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE)
 
-  for (const route of routeLines) {
-    ctx.strokeStyle = route === routeLines[0] ? '#283246' : '#8b5cf6'
-    ctx.lineWidth = route === routeLines[0] ? 5 : 3
+  const boardRouteLines = getBoardRouteLines(state)
+  const outerRoute = boardRouteLines[0]
+
+  // Draw from the server-sent route table first. The local routes are only a
+  // fallback for old rooms or a disconnected preview state.
+  for (const route of boardRouteLines) {
+    ctx.strokeStyle = route === outerRoute ? '#283246' : '#8b5cf6'
+    ctx.lineWidth = route === outerRoute ? 5 : 3
     ctx.beginPath()
     route.forEach((key, index) => {
       const point = pointByKey[key]
@@ -511,7 +561,7 @@ const drawBoard = () => {
     ctx.stroke()
   }
 
-  const uniqueKeys = [...new Set(routeLines.flat())]
+  const uniqueKeys = [...new Set(boardRouteLines.flat())]
   for (const key of uniqueKeys) {
     const point = pointByKey[key]
     if (!point) continue
@@ -544,10 +594,24 @@ const drawBoard = () => {
     }
   }
 
+  const firstMove = state.turn.pendingMoves[0]
+  const legalPieceIds = firstMove ? new Set(state.turn.legalMoves[firstMove.id] ?? []) : new Set<string>()
+
   const drawPiece = (piece: YutPiece, offsetX = 0, offsetY = 0, stackSize = 1) => {
     const point = getPiecePoint(piece)
     const x = Number.isFinite(point.x) ? point.x + offsetX : pointByKey.O0!.x
     const y = Number.isFinite(point.y) ? point.y + offsetY : pointByKey.O0!.y
+    const canMoveNow = state.turn.currentPlayerId === socket.id && legalPieceIds.has(piece.id)
+
+    if (canMoveNow) {
+      ctx.beginPath()
+      ctx.fillStyle = 'rgba(17, 17, 17, 0.08)'
+      ctx.strokeStyle = '#111111'
+      ctx.lineWidth = 2
+      ctx.arc(x, y, PIECE_RADIUS + 8, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+    }
 
     ctx.beginPath()
     ctx.fillStyle = getPlayerColor(piece.playerId)
@@ -753,6 +817,7 @@ onBeforeUnmount(() => {
           <section class="side-card">
             <h3>현재 턴</h3>
             <p>{{ currentPlayer?.nickname ?? '대기 중' }}</p>
+            <p v-if="gameState" class="turn-meta">추가 턴 {{ gameState.extraTurns ?? gameState.turn.extraTurnCount }}회</p>
             <button class="dark-button full" type="button" :disabled="!canThrowYut" @click="throwYut">
               {{ isThrowing ? '던지는 중...' : '윷 던지기' }}
             </button>
@@ -762,14 +827,14 @@ onBeforeUnmount(() => {
             <h3>사용할 윷 결과</h3>
             <div v-if="pendingMoves.length" class="move-list">
               <button
-                v-for="move in pendingMoves"
+                v-for="(move, index) in pendingMoves"
                 :key="move.id"
                 class="move-button"
-                :class="{ active: selectedMoveId === move.id }"
+                :class="{ active: index === 0 }"
                 type="button"
-                @click="selectedMoveId = move.id"
+                disabled
               >
-                {{ move.label }} {{ move.steps > 0 ? `+${move.steps}` : move.steps }}
+                {{ index + 1 }}. {{ move.label }} {{ move.steps > 0 ? `+${move.steps}` : move.steps }}
               </button>
             </div>
             <p v-else class="muted">윷을 던지면 결과가 표시됩니다.</p>
@@ -1106,6 +1171,7 @@ button:disabled {
 .game-canvas {
   width: 100%;
   max-width: 780px;
+  aspect-ratio: 1;
   cursor: pointer;
 }
 
@@ -1173,6 +1239,12 @@ button:disabled {
 .move-button.active {
   background: #2f2f2f;
   color: #ffffff;
+}
+
+.turn-meta {
+  font-size: 0.86rem;
+  font-weight: 900;
+  color: #666666;
 }
 
 .log-card {

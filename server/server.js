@@ -26,6 +26,23 @@ const SHORTCUT_BY_OUTER_INDEX = {
   15: 'shortcutC',
 }
 
+// Step 1 path design:
+// - O0 is the bottom-right start cell.
+// - O20 is the bottom-right finish cell after one counter-clockwise lap.
+// - Pieces on O5/O10/O15 enter the matching shortcut on their next forward move.
+// - Shortcut routes meet at C, then continue through D1/D2 back to O20.
+const BOARD_PATH = {
+  startKey: 'O0',
+  finishKey: 'O20',
+  beforeFinishKey: 'O19',
+  beforeFinishOuterIndex: 19,
+  homePosition: -1,
+  direction: 'counter-clockwise',
+  routes: ROUTES,
+  shortcutByOuterIndex: SHORTCUT_BY_OUTER_INDEX,
+  forcedShortcutOnCorner: true,
+}
+
 const YUT_RESULTS = [
   { name: 'backdo', label: '빽도', steps: -1, grantsExtraTurn: false, weight: 1 },
   { name: 'do', label: '도', steps: 1, grantsExtraTurn: false, weight: 4 },
@@ -61,11 +78,16 @@ const makeLogMessage = (type, message, player = null) => ({
   at: now(),
 })
 
-const createInitialGameState = (maxPlayers, gameType = 'yut') => ({
+const createInitialGameState = (roomId, maxPlayers, gameType = 'yut') => ({
+  roomId,
   gameType,
   status: 'waiting',
   maxPlayers,
   players: [],
+  currentTurnIndex: 0,
+  pendingMoves: [],
+  extraTurns: 0,
+  winner: null,
   turn: {
     playerIndex: 0,
     currentPlayerId: null,
@@ -75,7 +97,9 @@ const createInitialGameState = (maxPlayers, gameType = 'yut') => ({
     legalMoves: {},
   },
   board: {
+    path: BOARD_PATH,
     routes: ROUTES,
+    shortcuts: SHORTCUT_BY_OUTER_INDEX,
     pieces: [],
   },
   lastAction: null,
@@ -120,6 +144,15 @@ const getPublicPlayer = (player) => ({
   color: player.color,
 })
 
+const getPublicPiece = (piece) => ({
+  id: piece.id,
+  position: piece.state === 'finished' ? 'finished' : piece.position,
+  finished: piece.state === 'finished',
+  route: piece.route,
+  state: piece.state,
+  boardKey: piece.boardKey,
+})
+
 const getRoute = (routeName) => ROUTES[routeName] ?? ROUTES.outer
 
 const getBoardKey = (piece) => {
@@ -138,16 +171,30 @@ const sameStack = (a, b) => {
 }
 
 const syncGamePlayers = (room) => {
-  room.gameState.players = room.players.map(getPublicPlayer)
+  room.gameState.players = room.players.map((player) => ({
+    ...getPublicPlayer(player),
+    pieces: room.gameState.board.pieces.filter((piece) => piece.playerId === player.id).map(getPublicPiece),
+  }))
 
   if (room.gameState.status !== 'playing' && room.gameState.status !== 'finished') {
     room.gameState.status = room.players.length === room.gameState.maxPlayers ? 'ready' : 'waiting'
   }
 }
 
+const syncGameStateAliases = (gameState) => {
+  // Compatibility shape for the planned rules. The existing nested turn object
+  // remains the source used by current gameplay code.
+  gameState.currentTurnIndex = gameState.turn.playerIndex
+  gameState.pendingMoves = gameState.turn.pendingMoves
+  gameState.extraTurns = gameState.turn.extraTurnCount
+  gameState.winner = gameState.winnerPlayerId
+}
+
 const canMovePiece = (piece, steps) => {
   if (piece.state === 'finished') return false
-  if (piece.state === 'home') return steps > 0
+  // Backdo can move a home piece to the cell right before finish.
+  // Positive moves enter from the bottom-right start cell.
+  if (piece.state === 'home') return steps > 0 || steps === -1
   if (steps < 0) return piece.position >= 0
   return true
 }
@@ -155,8 +202,16 @@ const canMovePiece = (piece, steps) => {
 const updateLegalMoves = (gameState) => {
   const currentPlayerId = gameState.turn.currentPlayerId
   const legalMoves = {}
+  const nextMove = gameState.turn.pendingMoves[0]
 
   for (const move of gameState.turn.pendingMoves) {
+    // pendingMoves is a FIFO queue. Only the first result can be used now;
+    // later results stay visible in the queue but are locked until their turn.
+    if (move.id !== nextMove?.id) {
+      legalMoves[move.id] = []
+      continue
+    }
+
     legalMoves[move.id] = gameState.board.pieces
       .filter((piece) => piece.playerId === currentPlayerId)
       .filter((piece) => canMovePiece(piece, move.steps))
@@ -170,6 +225,8 @@ const touchGameState = (room, message, type = 'system') => {
   syncGamePlayers(room)
   syncPieceBoardKeys(room.gameState)
   updateLegalMoves(room.gameState)
+  syncGamePlayers(room)
+  syncGameStateAliases(room.gameState)
   room.gameState.lastAction = message
     ? {
         type,
@@ -184,6 +241,7 @@ const getPublicRoom = (room) => {
   touchGameState(room)
 
   return {
+    roomId: room.roomId,
     code: room.code,
     gameType: room.gameType,
     hostId: room.hostId,
@@ -202,6 +260,7 @@ const emitSystemMessage = (room, message, type = 'system') => {
 
 const emitPlayersUpdated = (room) => {
   io.to(room.code).emit('playersUpdated', {
+    roomId: room.roomId,
     roomCode: room.code,
     players: room.players.map(getPublicPlayer),
   })
@@ -211,6 +270,7 @@ const emitGameStateUpdated = (room) => {
   touchGameState(room)
 
   io.to(room.code).emit('gameStateUpdated', {
+    roomId: room.roomId,
     roomCode: room.code,
     gameState: room.gameState,
   })
@@ -247,6 +307,55 @@ const rollYut = () => {
   }
 }
 
+const handleRollYut = (socket, callback) => {
+  const room = findCurrentRoom(socket)
+
+  if (!room) {
+    callback?.({ ok: false, error: '참가 중인 방이 없습니다.' })
+    return
+  }
+
+  const gameState = room.gameState
+
+  if (gameState.status !== 'playing') {
+    callback?.({ ok: false, error: '게임이 진행 중이 아닙니다.' })
+    return
+  }
+
+  if (gameState.turn.currentPlayerId !== socket.id) {
+    callback?.({ ok: false, error: '현재 턴이 아닙니다.' })
+    return
+  }
+
+  if (!gameState.turn.mustThrow) {
+    callback?.({ ok: false, error: '먼저 큐에 있는 윷 결과로 말을 이동해주세요.' })
+    return
+  }
+
+  const result = rollYut()
+  gameState.turn.pendingMoves.push(result)
+  gameState.turn.mustThrow = false
+
+  if (result.grantsExtraTurn) {
+    gameState.turn.extraTurnCount += 1
+  }
+
+  updateLegalMoves(gameState)
+
+  if (gameState.turn.legalMoves[result.id]?.length === 0) {
+    gameState.turn.pendingMoves = gameState.turn.pendingMoves.filter((move) => move.id !== result.id)
+    touchGameState(room, `${result.label}가 나왔지만 움직일 수 있는 말이 없습니다.`, 'throw')
+    emitSystemMessage(room, `${result.label}가 나왔지만 움직일 수 있는 말이 없습니다.`, 'throw')
+    advanceTurn(gameState)
+  } else {
+    touchGameState(room, `${result.label}가 나왔습니다.`, 'throw')
+    emitSystemMessage(room, `${result.label}가 나왔습니다.`, 'throw')
+  }
+
+  emitGameStateUpdated(room)
+  callback?.({ ok: true, result, gameState })
+}
+
 const setTurnPlayer = (gameState, playerIndex) => {
   const boundedIndex = playerIndex % gameState.players.length
 
@@ -259,13 +368,51 @@ const setTurnPlayer = (gameState, playerIndex) => {
 }
 
 const advanceTurn = (gameState) => {
+  // A queued move must always be consumed before a throw or turn change.
+  if (gameState.turn.pendingMoves.length > 0) {
+    gameState.turn.mustThrow = false
+    updateLegalMoves(gameState)
+    return
+  }
+
   if (gameState.turn.extraTurnCount > 0) {
     gameState.turn.extraTurnCount -= 1
     gameState.turn.mustThrow = true
+    gameState.turn.pendingMoves = []
+    gameState.turn.legalMoves = {}
     return
   }
 
   setTurnPlayer(gameState, gameState.turn.playerIndex + 1)
+}
+
+const finishMoveTurn = (gameState) => {
+  if (gameState.status === 'finished') return
+
+  // FIFO rule: if another pending result exists, the same player must use it
+  // before throwing again or passing the turn.
+  if (gameState.turn.pendingMoves.length > 0) {
+    gameState.turn.mustThrow = false
+    updateLegalMoves(gameState)
+    return
+  }
+
+  advanceTurn(gameState)
+}
+
+const finishGame = (gameState, winnerPlayerId) => {
+  // Victory is terminal: clear every action queue and remove the active turn.
+  // The public aliases are synced in touchGameState before broadcasting.
+  gameState.status = 'finished'
+  gameState.winnerPlayerId = winnerPlayerId
+  gameState.winner = winnerPlayerId
+  gameState.turn.currentPlayerId = null
+  gameState.turn.mustThrow = false
+  gameState.turn.pendingMoves = []
+  gameState.turn.extraTurnCount = 0
+  gameState.turn.legalMoves = {}
+  gameState.pendingMoves = []
+  gameState.extraTurns = 0
 }
 
 const chooseForwardRoute = (piece) => {
@@ -275,6 +422,16 @@ const chooseForwardRoute = (piece) => {
 
 const getNextLocation = (piece, steps) => {
   if (piece.state === 'home') {
+    if (steps === -1) {
+      return {
+        state: 'active',
+        route: 'outer',
+        // Special backdo rule: a not-yet-started piece can enter at O19,
+        // the outer cell immediately before the bottom-right finish O20.
+        position: BOARD_PATH.beforeFinishOuterIndex,
+      }
+    }
+
     return steps > 0
       ? {
           state: 'active',
@@ -325,6 +482,13 @@ const setPieceLocation = (piece, location) => {
   piece.boardKey = getBoardKey(piece)
 }
 
+const sendPieceHome = (piece) => {
+  piece.route = 'outer'
+  piece.position = BOARD_PATH.homePosition
+  piece.state = 'home'
+  piece.boardKey = 'home'
+}
+
 const getMovingStack = (gameState, piece) => {
   if (piece.state !== 'active') return [piece]
   return gameState.board.pieces.filter((target) => sameStack(piece, target))
@@ -348,9 +512,7 @@ const applyMove = (gameState, piece, move) => {
     )
 
     for (const capturedPiece of capturedPieces) {
-      capturedPiece.route = 'outer'
-      capturedPiece.position = -1
-      capturedPiece.state = 'home'
+      sendPieceHome(capturedPiece)
     }
   }
 
@@ -362,11 +524,7 @@ const applyMove = (gameState, piece, move) => {
   const hasWon = playerPieces.every((target) => target.state === 'finished')
 
   if (hasWon) {
-    gameState.status = 'finished'
-    gameState.winnerPlayerId = piece.playerId
-    gameState.turn.mustThrow = false
-    gameState.turn.pendingMoves = []
-    gameState.turn.extraTurnCount = 0
+    finishGame(gameState, piece.playerId)
   }
 
   return {
@@ -451,11 +609,12 @@ io.on('connection', (socket) => {
       color: PLAYER_COLORS[0],
     }
     const room = {
+      roomId: roomCode,
       code: roomCode,
       gameType: safeGameType,
       hostId: socket.id,
       players: [player],
-      gameState: createInitialGameState(safeMaxPlayers, safeGameType),
+      gameState: createInitialGameState(roomCode, safeMaxPlayers, safeGameType),
       logs: [],
     }
 
@@ -549,54 +708,10 @@ io.on('connection', (socket) => {
     callback?.({ ok: true, gameState: room.gameState })
   })
 
-  socket.on('throwYut', (callback) => {
-    const room = findCurrentRoom(socket)
+  socket.on('rollYut', (callback) => handleRollYut(socket, callback))
 
-    if (!room) {
-      callback?.({ ok: false, error: '참가 중인 방이 없습니다.' })
-      return
-    }
-
-    const gameState = room.gameState
-
-    if (gameState.status !== 'playing') {
-      callback?.({ ok: false, error: '게임이 진행 중이 아닙니다.' })
-      return
-    }
-
-    if (gameState.turn.currentPlayerId !== socket.id) {
-      callback?.({ ok: false, error: '현재 턴이 아닙니다.' })
-      return
-    }
-
-    if (!gameState.turn.mustThrow) {
-      callback?.({ ok: false, error: '먼저 말을 이동해주세요.' })
-      return
-    }
-
-    const result = rollYut()
-    gameState.turn.pendingMoves.push(result)
-    gameState.turn.mustThrow = false
-
-    if (result.grantsExtraTurn) {
-      gameState.turn.extraTurnCount += 1
-    }
-
-    updateLegalMoves(gameState)
-
-    if (gameState.turn.legalMoves[result.id]?.length === 0) {
-      gameState.turn.pendingMoves = gameState.turn.pendingMoves.filter((move) => move.id !== result.id)
-      touchGameState(room, `${result.label}가 나왔지만 움직일 수 있는 말이 없습니다.`, 'throw')
-      emitSystemMessage(room, `${result.label}가 나왔지만 움직일 수 있는 말이 없습니다.`, 'throw')
-      advanceTurn(gameState)
-    } else {
-      touchGameState(room, `${result.label}가 나왔습니다.`, 'throw')
-      emitSystemMessage(room, `${result.label}가 나왔습니다.`, 'throw')
-    }
-
-    emitGameStateUpdated(room)
-    callback?.({ ok: true, result, gameState })
-  })
+  // Backward-compatible alias for the current Vue client. New code should use rollYut.
+  socket.on('throwYut', (callback) => handleRollYut(socket, callback))
 
   socket.on('movePiece', ({ pieceId, throwId } = {}, callback) => {
     const room = findCurrentRoom(socket)
@@ -623,10 +738,10 @@ io.on('connection', (socket) => {
       return
     }
 
-    const move = gameState.turn.pendingMoves.find((pendingMove) => pendingMove.id === throwId)
+    const move = gameState.turn.pendingMoves[0]
     const piece = gameState.board.pieces.find((target) => target.id === pieceId)
 
-    if (!move) {
+    if (!move || move.id !== throwId) {
       callback?.({ ok: false, error: '사용할 수 없는 윷 결과입니다.' })
       return
     }
@@ -641,7 +756,8 @@ io.on('connection', (socket) => {
       return
     }
 
-    gameState.turn.pendingMoves = gameState.turn.pendingMoves.filter((pendingMove) => pendingMove.id !== throwId)
+    // FIFO: consume exactly one result from the front of the queue.
+    gameState.turn.pendingMoves.shift()
 
     const { capturedPieces, movedPieces } = applyMove(gameState, piece, move)
     const player = room.players.find((target) => target.id === socket.id)
@@ -651,11 +767,8 @@ io.on('connection', (socket) => {
     if (gameState.status === 'finished') {
       touchGameState(room, `${player?.nickname ?? '플레이어'}님이 승리했습니다.`, 'finish')
       emitSystemMessage(room, `${player?.nickname ?? '플레이어'}님이 승리했습니다.`, 'finish')
-    } else if (gameState.turn.pendingMoves.length === 0) {
-      advanceTurn(gameState)
-      touchGameState(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
-      emitSystemMessage(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
     } else {
+      finishMoveTurn(gameState)
       touchGameState(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
       emitSystemMessage(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
     }
