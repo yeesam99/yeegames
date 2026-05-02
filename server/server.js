@@ -53,6 +53,14 @@ const io = new Server(httpServer, {
 const rooms = new Map()
 const now = () => new Date().toISOString()
 
+const makeLogMessage = (type, message, player = null) => ({
+  id: makeMoveId(),
+  type,
+  message,
+  player,
+  at: now(),
+})
+
 const createInitialGameState = (maxPlayers, gameType = 'yut') => ({
   gameType,
   status: 'waiting',
@@ -181,7 +189,15 @@ const getPublicRoom = (room) => {
     hostId: room.hostId,
     players: room.players.map(getPublicPlayer),
     gameState: room.gameState,
+    logs: room.logs ?? [],
   }
+}
+
+const emitSystemMessage = (room, message, type = 'system') => {
+  if (!room.logs) room.logs = []
+  const log = makeLogMessage(type, message)
+  room.logs = [...room.logs.slice(-79), log]
+  io.to(room.code).emit('systemMessage', log)
 }
 
 const emitPlayersUpdated = (room) => {
@@ -440,6 +456,7 @@ io.on('connection', (socket) => {
       hostId: socket.id,
       players: [player],
       gameState: createInitialGameState(safeMaxPlayers, safeGameType),
+      logs: [],
     }
 
     syncGamePlayers(room)
@@ -450,6 +467,7 @@ io.on('connection', (socket) => {
     const publicRoom = getPublicRoom(room)
 
     socket.emit('roomCreated', publicRoom)
+    emitSystemMessage(room, `${safeNickname}님이 방을 만들었습니다.`)
     emitPlayersUpdated(room)
     emitGameStateUpdated(room)
     callback?.({ ok: true, room: publicRoom })
@@ -497,6 +515,7 @@ io.on('connection', (socket) => {
     const publicRoom = getPublicRoom(room)
 
     socket.emit('roomJoined', publicRoom)
+    emitSystemMessage(room, `${safeNickname}님이 입장했습니다.`)
     emitPlayersUpdated(room)
     emitGameStateUpdated(room)
     callback?.({ ok: true, room: publicRoom })
@@ -525,6 +544,7 @@ io.on('connection', (socket) => {
     room.gameState.board.pieces = createPieces(room.players)
     setTurnPlayer(room.gameState, 0)
     touchGameState(room, '게임이 시작되었습니다.', 'start')
+    emitSystemMessage(room, '게임이 시작되었습니다.', 'start')
     emitGameStateUpdated(room)
     callback?.({ ok: true, gameState: room.gameState })
   })
@@ -567,9 +587,11 @@ io.on('connection', (socket) => {
     if (gameState.turn.legalMoves[result.id]?.length === 0) {
       gameState.turn.pendingMoves = gameState.turn.pendingMoves.filter((move) => move.id !== result.id)
       touchGameState(room, `${result.label}가 나왔지만 움직일 수 있는 말이 없습니다.`, 'throw')
+      emitSystemMessage(room, `${result.label}가 나왔지만 움직일 수 있는 말이 없습니다.`, 'throw')
       advanceTurn(gameState)
     } else {
       touchGameState(room, `${result.label}가 나왔습니다.`, 'throw')
+      emitSystemMessage(room, `${result.label}가 나왔습니다.`, 'throw')
     }
 
     emitGameStateUpdated(room)
@@ -628,11 +650,14 @@ io.on('connection', (socket) => {
 
     if (gameState.status === 'finished') {
       touchGameState(room, `${player?.nickname ?? '플레이어'}님이 승리했습니다.`, 'finish')
+      emitSystemMessage(room, `${player?.nickname ?? '플레이어'}님이 승리했습니다.`, 'finish')
     } else if (gameState.turn.pendingMoves.length === 0) {
       advanceTurn(gameState)
       touchGameState(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
+      emitSystemMessage(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
     } else {
       touchGameState(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
+      emitSystemMessage(room, `${move.label}로 말을 이동했습니다.${stackText}${captureText}`, 'move')
     }
 
     emitGameStateUpdated(room)
@@ -641,6 +666,29 @@ io.on('connection', (socket) => {
 
   socket.on('updateGameState', (_payload = {}, callback) => {
     callback?.({ ok: false, error: '게임 상태는 서버 게임 이벤트로만 변경할 수 있습니다.' })
+  })
+
+  socket.on('chatMessage', ({ message } = {}, callback) => {
+    const room = findCurrentRoom(socket)
+    const text = typeof message === 'string' ? message.trim().slice(0, 120) : ''
+
+    if (!room) {
+      callback?.({ ok: false, error: '참가 중인 방이 없습니다.' })
+      return
+    }
+
+    if (!text) {
+      callback?.({ ok: false, error: '메시지를 입력해주세요.' })
+      return
+    }
+
+    const player = room.players.find((target) => target.id === socket.id)
+    if (!room.logs) room.logs = []
+
+    const log = makeLogMessage('chat', text, player ? getPublicPlayer(player) : null)
+    room.logs = [...room.logs.slice(-79), log]
+    io.to(room.code).emit('chatMessage', log)
+    callback?.({ ok: true })
   })
 
   socket.on('leaveRoom', (callback) => {

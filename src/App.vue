@@ -62,12 +62,21 @@ type RoomPayload = {
   hostId: string
   players: Player[]
   gameState: GameState
+  logs?: LogMessage[]
 }
 
 type ServerResponse<T = unknown> = {
   ok: boolean
   error?: string
 } & T
+
+type LogMessage = {
+  id: string
+  type: 'system' | 'start' | 'throw' | 'move' | 'finish' | 'chat'
+  message: string
+  player?: Player | null
+  at: string
+}
 
 type BoardPoint = {
   x: number
@@ -153,6 +162,31 @@ const localRoutes: Record<RouteName, string[]> = {
   shortcutC: routeLines[3]!,
 }
 
+const isRouteName = (route: string): route is RouteName => route in localRoutes
+
+const getSafeBoardKey = (piece: YutPiece, state?: GameState | null) => {
+  if (piece.state !== 'active') return piece.state
+  if (piece.boardKey && pointByKey[piece.boardKey]) return piece.boardKey
+
+  const routeName = isRouteName(piece.route) ? piece.route : 'outer'
+  const route = state?.board.routes?.[routeName] ?? localRoutes[routeName]
+  return route[piece.position] && pointByKey[route[piece.position]!] ? route[piece.position]! : 'O0'
+}
+
+// Rooms can outlive a frontend refresh, so the client defensively fills any
+// missing boardKey before drawing. The server still owns the real game rules.
+const normalizeGameState = (nextGameState: GameState): GameState => ({
+  ...nextGameState,
+  board: {
+    ...nextGameState.board,
+    pieces: nextGameState.board.pieces.map((piece) => ({
+      ...piece,
+      route: isRouteName(piece.route) ? piece.route : 'outer',
+      boardKey: getSafeBoardKey(piece, nextGameState),
+    })),
+  },
+})
+
 const socket: Socket = io(SERVER_URL, { autoConnect: true })
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -168,6 +202,8 @@ const gameState = ref<GameState | null>(null)
 const connectionStatus = ref('서버 연결 중...')
 const message = ref('')
 const selectedMoveId = ref('')
+const logs = ref<LogMessage[]>([])
+const chatInput = ref('')
 const isCreating = ref(false)
 const isJoining = ref(false)
 const isStarting = ref(false)
@@ -209,6 +245,20 @@ const canThrowYut = computed(
 )
 const pendingMoves = computed(() => gameState.value?.turn.pendingMoves ?? [])
 const selectedMove = computed(() => pendingMoves.value.find((move) => move.id === selectedMoveId.value) ?? pendingMoves.value[0])
+const movablePieces = computed(() => {
+  const move = selectedMove.value
+  const state = gameState.value
+  if (!move || !state) return []
+
+  const legalPieceIds = state.turn.legalMoves[move.id] ?? []
+  return state.board.pieces.filter((piece) => legalPieceIds.includes(piece.id))
+})
+
+const canSendChat = computed(() => isInRoom.value && chatInput.value.trim().length > 0)
+
+const pushLog = (log: LogMessage) => {
+  logs.value = [...logs.value.filter((item) => item.id !== log.id), log].slice(-80)
+}
 
 const setRoom = (room: RoomPayload) => {
   currentRoomCode.value = room.code
@@ -216,7 +266,8 @@ const setRoom = (room: RoomPayload) => {
   hostId.value = room.hostId
   roomGameType.value = room.gameType ?? room.gameState.gameType ?? 'yut'
   players.value = room.players
-  gameState.value = room.gameState
+  gameState.value = normalizeGameState(room.gameState)
+  logs.value = room.logs ?? []
   selectedMoveId.value = room.gameState.turn.pendingMoves[0]?.id ?? ''
 }
 
@@ -263,11 +314,19 @@ socket.on('playersUpdated', ({ players: nextPlayers }: { roomCode: string; playe
 })
 
 socket.on('gameStateUpdated', ({ gameState: nextGameState }: { roomCode: string; gameState: GameState }) => {
-  gameState.value = nextGameState
+  gameState.value = normalizeGameState(nextGameState)
   if (!nextGameState.turn.pendingMoves.some((move) => move.id === selectedMoveId.value)) {
     selectedMoveId.value = nextGameState.turn.pendingMoves[0]?.id ?? ''
   }
   nextTick(drawBoard)
+})
+
+socket.on('systemMessage', (log: LogMessage) => {
+  pushLog(log)
+})
+
+socket.on('chatMessage', (log: LogMessage) => {
+  pushLog(log)
 })
 
 const createRoom = () => {
@@ -325,7 +384,7 @@ const startGame = () => {
   socket.emit('startGame', (response: ServerResponse<{ gameState?: GameState }>) => {
     isStarting.value = false
     setMessageFromResponse(response, '게임을 시작하지 못했습니다.')
-    if (response.ok && response.gameState) gameState.value = response.gameState
+    if (response.ok && response.gameState) gameState.value = normalizeGameState(response.gameState)
     nextTick(drawBoard)
   })
 }
@@ -339,7 +398,7 @@ const throwYut = () => {
     isThrowing.value = false
     setMessageFromResponse(response, '윷을 던지지 못했습니다.')
     if (response.ok && response.gameState) {
-      gameState.value = response.gameState
+      gameState.value = normalizeGameState(response.gameState)
       selectedMoveId.value = response.gameState.turn.pendingMoves[0]?.id ?? ''
       nextTick(drawBoard)
     }
@@ -353,9 +412,19 @@ const movePiece = (pieceId: string) => {
   socket.emit('movePiece', { pieceId, throwId: move.id }, (response: ServerResponse<{ gameState?: GameState }>) => {
     setMessageFromResponse(response, '말을 이동하지 못했습니다.')
     if (response.ok && response.gameState) {
-      gameState.value = response.gameState
+      gameState.value = normalizeGameState(response.gameState)
       nextTick(drawBoard)
     }
+  })
+}
+
+const sendChat = () => {
+  const text = chatInput.value.trim()
+  if (!text) return
+
+  socket.emit('chatMessage', { message: text }, (response: ServerResponse) => {
+    setMessageFromResponse(response, '채팅을 보내지 못했습니다.')
+    if (response.ok) chatInput.value = ''
   })
 }
 
@@ -366,6 +435,8 @@ const leaveRoom = () => {
     roomGameType.value = 'yut'
     players.value = []
     gameState.value = null
+    logs.value = []
+    chatInput.value = ''
     selectedMoveId.value = ''
     message.value = '방에서 나왔습니다.'
   })
@@ -373,10 +444,7 @@ const leaveRoom = () => {
 
 const getPieceKey = (piece: YutPiece) => {
   if (piece.state !== 'active') return piece.state
-  if (piece.boardKey && pointByKey[piece.boardKey]) return piece.boardKey
-  // Prefer the server-sent route table, but keep a local fallback so moved pieces never lose coordinates.
-  const route = gameState.value?.board.routes?.[piece.route] ?? localRoutes[piece.route]
-  return route[piece.position] ?? 'O20'
+  return getSafeBoardKey(piece, gameState.value)
 }
 
 const getPiecePoint = (piece: YutPiece): BoardPoint => {
@@ -405,7 +473,8 @@ const getPiecePoint = (piece: YutPiece): BoardPoint => {
     }
   }
 
-  return pointByKey[getPieceKey(piece)] ?? pointByKey.O0!
+  const key = getPieceKey(piece)
+  return pointByKey[key] ?? pointByKey.O0!
 }
 
 const getPlayerColor = (playerId: string) => players.value.find((player) => player.id === playerId)?.color ?? '#111827'
@@ -642,6 +711,28 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="board-layout">
+        <aside class="log-panel" aria-label="채팅 및 시스템 로그">
+          <section class="side-card log-card">
+            <div class="card-header">
+              <h3>로그</h3>
+              <span>{{ logs.length }}</span>
+            </div>
+
+            <div class="log-list">
+              <p v-if="logs.length === 0" class="muted">아직 기록이 없습니다.</p>
+              <article v-for="log in logs" :key="log.id" class="log-item" :class="log.type">
+                <strong>{{ log.player?.nickname ?? (log.type === 'chat' ? '플레이어' : 'SYSTEM') }}</strong>
+                <span>{{ log.message }}</span>
+              </article>
+            </div>
+
+            <form class="chat-form" @submit.prevent="sendChat">
+              <input v-model.trim="chatInput" type="text" maxlength="120" placeholder="메시지 입력" />
+              <button class="dark-button chat-button" type="submit" :disabled="!canSendChat">전송</button>
+            </form>
+          </section>
+        </aside>
+
         <canvas ref="canvasRef" class="game-canvas" width="720" height="720" @click="handleCanvasClick"></canvas>
 
         <aside class="state-panel">
@@ -682,6 +773,22 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <p v-else class="muted">윷을 던지면 결과가 표시됩니다.</p>
+          </section>
+
+          <section class="side-card">
+            <h3>이동 가능한 말</h3>
+            <div v-if="movablePieces.length" class="piece-action-list">
+              <button
+                v-for="piece in movablePieces"
+                :key="piece.id"
+                class="light-button piece-action"
+                type="button"
+                @click="movePiece(piece.id)"
+              >
+                {{ piece.index + 1 }}번 말
+              </button>
+            </div>
+            <p v-else class="muted">윷을 던진 뒤 움직일 수 있는 말이 표시됩니다.</p>
           </section>
 
           <section class="side-card">
@@ -984,7 +1091,7 @@ button:disabled {
 
 .board-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: 280px minmax(0, 1fr) 300px;
   gap: 22px;
   align-items: start;
 }
@@ -1002,6 +1109,7 @@ button:disabled {
   cursor: pointer;
 }
 
+.log-panel,
 .state-panel {
   display: grid;
   gap: 14px;
@@ -1065,6 +1173,71 @@ button:disabled {
 .move-button.active {
   background: #2f2f2f;
   color: #ffffff;
+}
+
+.log-card {
+  min-height: min(720px, calc(100vh - 132px));
+  grid-template-rows: auto minmax(220px, 1fr) auto;
+}
+
+.log-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  max-height: 520px;
+  overflow: auto;
+}
+
+.log-item {
+  display: grid;
+  gap: 3px;
+  border: 2px solid #111111;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 9px;
+}
+
+.log-item.chat {
+  background: #f7f7f7;
+}
+
+.log-item strong {
+  font-size: 0.75rem;
+  font-weight: 950;
+}
+
+.log-item span {
+  line-height: 1.35;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 8px;
+}
+
+.chat-form input {
+  min-width: 0;
+  height: 44px;
+  border: 2px solid #111111;
+  border-radius: 14px;
+  padding: 0 10px;
+  font: inherit;
+  font-weight: 800;
+}
+
+.chat-button {
+  min-height: 44px;
+}
+
+.piece-action-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.piece-action {
+  min-height: 42px;
 }
 
 .winner-text {
