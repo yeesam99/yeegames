@@ -9,6 +9,9 @@ const ROOM_CODE_LENGTH = 6
 const PIECES_PER_PLAYER = 4
 const PLAYER_COLORS = ['#ef4444', '#2563eb', '#16a34a', '#f59e0b', '#7c3aed']
 
+// Outer route starts at the bottom-right corner.
+// Position 0 is the bottom-right start cell. Increasing positions move counter-clockwise:
+// right side -> top-right -> top side -> top-left -> left side -> bottom-left -> bottom side -> bottom-right finish.
 const ROUTES = {
   outer: Array.from({ length: 21 }, (_item, index) => `O${index}`),
   shortcutA: ['O5', 'A1', 'A2', 'C', 'D1', 'D2', 'O20'],
@@ -16,6 +19,7 @@ const ROUTES = {
   shortcutC: ['O15', 'E1', 'E2', 'C', 'D1', 'D2', 'O20'],
 }
 
+// Corner shortcuts follow the new counter-clockwise outer indices.
 const SHORTCUT_BY_OUTER_INDEX = {
   5: 'shortcutA',
   10: 'shortcutB',
@@ -251,6 +255,7 @@ const getNextLocation = (piece, steps) => {
       ? {
           state: 'active',
           route: 'outer',
+          // A piece enters from the bottom-right start cell and then advances.
           position: steps - 1,
         }
       : {
@@ -281,6 +286,7 @@ const getNextLocation = (piece, steps) => {
   const startPosition = route === piece.route ? piece.position : 0
   const nextPosition = startPosition + steps
 
+  // Reaching or passing O20 means the piece completed a full lap back to the bottom-right corner.
   if (nextPosition >= routePath.length - 1) {
     return { state: 'finished', route, position: routePath.length - 1 }
   }

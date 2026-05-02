@@ -84,39 +84,62 @@ const games: Array<{ id: GameType; label: string; status: string }> = [
 
 const pointByKey: Record<string, BoardPoint> = {
   O0: { x: 610, y: 610 },
-  O1: { x: 500, y: 610 },
-  O2: { x: 390, y: 610 },
-  O3: { x: 280, y: 610 },
-  O4: { x: 170, y: 610 },
-  O5: { x: 90, y: 610 },
-  O6: { x: 90, y: 500 },
-  O7: { x: 90, y: 390 },
-  O8: { x: 90, y: 280 },
-  O9: { x: 90, y: 170 },
+  O1: { x: 610, y: 500 },
+  O2: { x: 610, y: 390 },
+  O3: { x: 610, y: 280 },
+  O4: { x: 610, y: 170 },
+  O5: { x: 610, y: 90 },
+  O6: { x: 500, y: 90 },
+  O7: { x: 390, y: 90 },
+  O8: { x: 280, y: 90 },
+  O9: { x: 170, y: 90 },
   O10: { x: 90, y: 90 },
-  O11: { x: 200, y: 90 },
-  O12: { x: 310, y: 90 },
-  O13: { x: 420, y: 90 },
-  O14: { x: 530, y: 90 },
-  O15: { x: 610, y: 90 },
-  O16: { x: 610, y: 200 },
-  O17: { x: 610, y: 310 },
-  O18: { x: 610, y: 420 },
-  O19: { x: 610, y: 530 },
+  O11: { x: 90, y: 200 },
+  O12: { x: 90, y: 310 },
+  O13: { x: 90, y: 420 },
+  O14: { x: 90, y: 530 },
+  O15: { x: 90, y: 610 },
+  O16: { x: 200, y: 610 },
+  O17: { x: 310, y: 610 },
+  O18: { x: 420, y: 610 },
+  O19: { x: 530, y: 610 },
   O20: { x: 610, y: 610 },
-  A1: { x: 190, y: 510 },
-  A2: { x: 280, y: 420 },
-  B1: { x: 190, y: 190 },
-  B2: { x: 280, y: 280 },
-  E1: { x: 510, y: 190 },
-  E2: { x: 420, y: 280 },
+  A1: { x: 550, y: 160 },
+  A2: { x: 450, y: 260 },
+  B1: { x: 160, y: 160 },
+  B2: { x: 260, y: 260 },
+  E1: { x: 160, y: 550 },
+  E2: { x: 260, y: 450 },
   C: { x: 350, y: 350 },
   D1: { x: 420, y: 420 },
   D2: { x: 510, y: 510 },
 }
 
 const routeLines: string[][] = [
-  ['O0', 'O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8', 'O9', 'O10', 'O11', 'O12', 'O13', 'O14', 'O15', 'O16', 'O17', 'O18', 'O19', 'O20'],
+  // O0 is the bottom-right start cell. The route moves counter-clockwise and returns to O20.
+  [
+    'O0',
+    'O1',
+    'O2',
+    'O3',
+    'O4',
+    'O5',
+    'O6',
+    'O7',
+    'O8',
+    'O9',
+    'O10',
+    'O11',
+    'O12',
+    'O13',
+    'O14',
+    'O15',
+    'O16',
+    'O17',
+    'O18',
+    'O19',
+    'O20',
+  ],
   ['O5', 'A1', 'A2', 'C', 'D1', 'D2', 'O20'],
   ['O10', 'B1', 'B2', 'C', 'D1', 'D2', 'O20'],
   ['O15', 'E1', 'E2', 'C', 'D1', 'D2', 'O20'],
@@ -143,6 +166,7 @@ const isStarting = ref(false)
 const isThrowing = ref(false)
 
 const normalizedRoomCode = computed(() => roomCodeInput.value.trim().toUpperCase())
+const isInRoom = computed(() => Boolean(currentRoomCode.value))
 const myPlayer = computed(() => players.value.find((player) => player.id === socket.id) ?? null)
 const isHost = computed(() => hostId.value === socket.id)
 const currentPlayer = computed(() => players.value.find((player) => player.id === gameState.value?.turn.currentPlayerId) ?? null)
@@ -192,7 +216,7 @@ const setMessageFromResponse = (response: ServerResponse, fallback: string) => {
   if (!response.ok) message.value = response.error ?? fallback
 }
 
-// Game buttons change only the lobby form. Non-YUT games are intentionally blocked for now.
+// 게임 선택은 로비 폼만 바꿉니다. YUT 외 게임은 아직 서버 입장을 막습니다.
 const selectGame = (gameType: GameType) => {
   selectedGame.value = gameType
   message.value = gameType === 'word' ? '끝말잇기는 아직 준비중입니다.' : ''
@@ -340,12 +364,13 @@ const getPieceKey = (piece: YutPiece) => {
 const getPiecePoint = (piece: YutPiece): BoardPoint => {
   if (piece.state === 'home') {
     const playerIndex = players.value.findIndex((player) => player.id === piece.playerId)
+    // Home pieces stay clustered just outside the bottom-right start corner.
     const homeOrigins: BoardPoint[] = [
-      { x: 660, y: 660 },
-      { x: 60, y: 660 },
-      { x: 60, y: 60 },
-      { x: 660, y: 60 },
-      { x: 360, y: 65 },
+      { x: 672, y: 652 },
+      { x: 652, y: 680 },
+      { x: 680, y: 680 },
+      { x: 626, y: 652 },
+      { x: 626, y: 680 },
     ]
     const origin = homeOrigins[playerIndex] ?? homeOrigins[0]!
     return {
@@ -369,7 +394,7 @@ const getPlayerColor = (playerId: string) => players.value.find((player) => play
 const drawBoard = () => {
   const canvas = canvasRef.value
   const state = gameState.value
-  if (!canvas || !state) return
+  if (!canvas || !state || !isInRoom.value) return
 
   const ratio = window.devicePixelRatio || 1
   canvas.width = CANVAS_SIZE * ratio
@@ -491,13 +516,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="app-shell">
+  <main class="app-shell" :class="{ 'in-room': isInRoom }">
     <header class="top-logo" aria-label="YUT 로고">
       <span>Y</span>
       <strong>YUT</strong>
     </header>
 
-    <section class="entry-stage" aria-labelledby="entry-title">
+    <section v-if="!isInRoom" class="entry-stage" aria-labelledby="entry-title">
       <div class="entry-card">
         <div class="game-tabs" aria-label="게임 선택">
           <button
@@ -508,37 +533,33 @@ onBeforeUnmount(() => {
             type="button"
             @click="selectGame(game.id)"
           >
-            <span>{{ game.label }}</span>
-            <small>{{ game.status }}</small>
+            {{ game.label }}
           </button>
         </div>
 
         <div class="entry-heading">
-          <p class="eyebrow">Game Lobby</p>
-          <h1 id="entry-title">{{ isYutSelected ? '윷놀이 방 입장' : '끝말잇기' }}</h1>
-          <p>{{ isYutSelected ? '방을 만들거나 코드로 입장하세요.' : '이 게임은 아직 준비중입니다.' }}</p>
+          <h1 id="entry-title">{{ isYutSelected ? '윷놀이' : '끝말잇기' }}</h1>
+          <p>{{ isYutSelected ? '닉네임과 방 코드로 바로 시작하세요.' : '아직 준비중입니다.' }}</p>
         </div>
 
         <form v-if="isYutSelected" class="entry-form" @submit.prevent="joinRoom">
           <label class="field">
             <span>닉네임</span>
-            <input v-model.trim="nickname" type="text" autocomplete="nickname" maxlength="16" placeholder="닉네임 입력" />
+            <input v-model.trim="nickname" type="text" autocomplete="nickname" maxlength="16" placeholder="닉네임" />
           </label>
 
           <label class="field">
             <span>목표 인원</span>
-            <select v-model.number="maxPlayers" :disabled="Boolean(currentRoomCode)">
+            <select v-model.number="maxPlayers">
               <option v-for="count in [2, 3, 4, 5]" :key="count" :value="count">{{ count }}명</option>
             </select>
           </label>
 
-          <div class="rule-box">
-            {{ ruleText }}
-          </div>
+          <p class="rule-box">{{ ruleText }}</p>
 
           <label class="field">
             <span>방 코드</span>
-            <input v-model.trim="roomCodeInput" type="text" inputmode="text" maxlength="8" placeholder="방 코드 입력" />
+            <input v-model.trim="roomCodeInput" type="text" inputmode="text" maxlength="8" placeholder="입장할 방 코드" />
           </label>
 
           <div class="entry-actions">
@@ -553,7 +574,7 @@ onBeforeUnmount(() => {
 
         <div v-else class="coming-soon">
           <strong>준비중</strong>
-          <p>끝말잇기 로비는 다음 단계에서 연결할 예정입니다.</p>
+          <p>끝말잇기는 다음 단계에서 연결할 예정입니다.</p>
         </div>
 
         <p class="server-line">
@@ -565,7 +586,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section v-if="currentRoomCode" class="game-panel" aria-label="윷놀이 게임">
+    <section v-else class="game-panel" aria-label="윷놀이 게임">
       <header class="game-header">
         <div>
           <p class="eyebrow">{{ currentRoomCode }} · {{ roomGameType.toUpperCase() }}</p>
@@ -641,6 +662,7 @@ onBeforeUnmount(() => {
   min-height: 100vh;
   background: #ffffff;
   color: #111111;
+  overflow-x: hidden;
 }
 
 .top-logo {
@@ -673,35 +695,34 @@ onBeforeUnmount(() => {
   display: grid;
   min-height: 100vh;
   place-items: center;
-  padding: 96px 20px 56px;
+  padding: 88px 20px 40px;
 }
 
 .entry-card {
-  width: min(100%, 440px);
+  width: min(100%, 390px);
   border: 2px solid #111111;
-  border-radius: 28px;
+  border-radius: 22px;
   background: #ffffff;
-  padding: 18px;
-  box-shadow: 0 18px 0 #111111;
+  padding: 16px;
+  box-shadow: 0 10px 0 #111111;
 }
 
 .game-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 26px;
+  gap: 8px;
+  margin-bottom: 18px;
 }
 
 .game-tab {
-  display: grid;
-  min-height: 64px;
+  min-height: 46px;
   border: 2px solid #111111;
-  border-radius: 18px;
+  border-radius: 14px;
   background: #ffffff;
   color: #111111;
   cursor: pointer;
-  padding: 10px 12px;
-  text-align: left;
+  font: inherit;
+  font-weight: 950;
 }
 
 .game-tab.active {
@@ -709,26 +730,8 @@ onBeforeUnmount(() => {
   color: #ffffff;
 }
 
-.game-tab span,
-.game-tab small {
-  font-weight: 900;
-}
-
-.game-tab small {
-  opacity: 0.72;
-}
-
 .entry-heading {
-  margin-bottom: 22px;
-}
-
-.eyebrow {
-  margin-bottom: 8px;
-  color: #666666;
-  font-size: 0.76rem;
-  font-weight: 900;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  margin-bottom: 16px;
 }
 
 h1,
@@ -739,9 +742,8 @@ p {
 }
 
 h1 {
-  font-size: 2rem;
+  font-size: 1.8rem;
   font-weight: 950;
-  letter-spacing: 0;
 }
 
 h2 {
@@ -762,12 +764,12 @@ h3 {
 
 .entry-form {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .field {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .field span {
@@ -777,29 +779,24 @@ h3 {
 .field input,
 .field select {
   width: 100%;
-  height: 52px;
+  height: 48px;
   border: 2px solid #111111;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #ffffff;
   color: #111111;
   font: inherit;
   font-weight: 800;
   outline: none;
-  padding: 0 14px;
-}
-
-.field input:focus,
-.field select:focus {
-  box-shadow: 0 0 0 4px rgba(17, 17, 17, 0.12);
+  padding: 0 12px;
 }
 
 .rule-box,
 .coming-soon {
   border: 2px solid #111111;
-  border-radius: 18px;
-  background: #f6f6f6;
-  padding: 14px;
-  font-weight: 900;
+  border-radius: 14px;
+  background: #f7f7f7;
+  padding: 12px;
+  font-weight: 850;
 }
 
 .coming-soon {
@@ -815,16 +812,16 @@ h3 {
 .header-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .dark-button,
 .light-button,
 .danger-button,
 .move-button {
-  min-height: 52px;
+  min-height: 48px;
   border: 2px solid #111111;
-  border-radius: 16px;
+  border-radius: 14px;
   cursor: pointer;
   font: inherit;
   font-weight: 950;
@@ -848,7 +845,7 @@ h3 {
 }
 
 .compact {
-  min-height: 44px;
+  min-height: 42px;
   padding: 0 16px;
 }
 
@@ -865,14 +862,14 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 18px;
-  font-size: 0.88rem;
+  margin-top: 14px;
+  font-size: 0.84rem;
   font-weight: 800;
 }
 
 .server-line span {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   background: #e11d48;
 }
@@ -882,17 +879,18 @@ button:disabled {
 }
 
 .message {
-  margin-top: 12px;
+  margin-top: 10px;
   border: 2px solid #111111;
-  border-radius: 16px;
+  border-radius: 14px;
   background: #f7f7f7;
-  padding: 12px;
-  font-weight: 900;
+  padding: 10px;
+  font-weight: 850;
 }
 
 .game-panel {
-  border-top: 2px solid #111111;
+  min-height: 100vh;
   padding: 32px;
+  padding-top: 92px;
 }
 
 .game-header {
@@ -903,8 +901,16 @@ button:disabled {
   margin-bottom: 22px;
 }
 
-.game-header p {
+.game-header p,
+.eyebrow {
   color: #666666;
+}
+
+.eyebrow {
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .board-layout {
@@ -1009,11 +1015,6 @@ button:disabled {
     left: 20px;
   }
 
-  .entry-card {
-    border-radius: 22px;
-    box-shadow: 0 10px 0 #111111;
-  }
-
   .entry-actions,
   .header-actions {
     grid-template-columns: 1fr;
@@ -1021,6 +1022,7 @@ button:disabled {
 
   .game-panel {
     padding: 24px 16px;
+    padding-top: 84px;
   }
 }
 </style>
