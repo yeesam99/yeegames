@@ -119,6 +119,12 @@ const getBoardKey = (piece) => {
   return getRoute(piece.route)[piece.position] ?? 'finished'
 }
 
+const syncPieceBoardKeys = (gameState) => {
+  for (const piece of gameState.board.pieces) {
+    piece.boardKey = getBoardKey(piece)
+  }
+}
+
 const sameStack = (a, b) => {
   return a.playerId === b.playerId && a.state === 'active' && b.state === 'active' && getBoardKey(a) === getBoardKey(b)
 }
@@ -154,6 +160,7 @@ const updateLegalMoves = (gameState) => {
 
 const touchGameState = (room, message, type = 'system') => {
   syncGamePlayers(room)
+  syncPieceBoardKeys(room.gameState)
   updateLegalMoves(room.gameState)
   room.gameState.lastAction = message
     ? {
@@ -207,6 +214,7 @@ const createPieces = (players) => {
       route: 'outer',
       position: -1,
       state: 'home',
+      boardKey: 'home',
     })),
   )
 }
@@ -298,6 +306,7 @@ const setPieceLocation = (piece, location) => {
   piece.state = location.state
   piece.route = location.route
   piece.position = location.position
+  piece.boardKey = getBoardKey(piece)
 }
 
 const getMovingStack = (gameState, piece) => {

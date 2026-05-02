@@ -26,6 +26,7 @@ type YutPiece = {
   index: number
   route: RouteName
   position: number
+  boardKey?: string
   state: 'home' | 'active' | 'finished'
 }
 
@@ -372,6 +373,7 @@ const leaveRoom = () => {
 
 const getPieceKey = (piece: YutPiece) => {
   if (piece.state !== 'active') return piece.state
+  if (piece.boardKey && pointByKey[piece.boardKey]) return piece.boardKey
   // Prefer the server-sent route table, but keep a local fallback so moved pieces never lose coordinates.
   const route = gameState.value?.board.routes?.[piece.route] ?? localRoutes[piece.route]
   return route[piece.position] ?? 'O20'
@@ -492,7 +494,18 @@ const drawBoard = () => {
   }
 
   for (const piece of loosePieces) drawPiece(piece)
-  for (const group of activeGroups.values()) drawPiece(group[0]!, 0, 0, group.length)
+  for (const group of activeGroups.values()) {
+    group.forEach((piece, index) => {
+      const offsets = [
+        { x: 0, y: 0 },
+        { x: 10, y: -10 },
+        { x: -10, y: 10 },
+        { x: 10, y: 10 },
+      ]
+      const offset = offsets[index] ?? offsets[0]!
+      drawPiece(piece, offset.x, offset.y, group.length)
+    })
+  }
 }
 
 const handleCanvasClick = (event: MouseEvent) => {
