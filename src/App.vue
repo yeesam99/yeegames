@@ -145,6 +145,13 @@ const routeLines: string[][] = [
   ['O15', 'E1', 'E2', 'C', 'D1', 'D2', 'O20'],
 ]
 
+const localRoutes: Record<RouteName, string[]> = {
+  outer: routeLines[0]!,
+  shortcutA: routeLines[1]!,
+  shortcutB: routeLines[2]!,
+  shortcutC: routeLines[3]!,
+}
+
 const socket: Socket = io(SERVER_URL, { autoConnect: true })
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -237,11 +244,13 @@ socket.on('connect_error', () => {
 socket.on('roomCreated', (room: RoomPayload) => {
   setRoom(room)
   message.value = `방 ${room.code}를 만들었습니다.`
+  nextTick(drawBoard)
 })
 
 socket.on('roomJoined', (room: RoomPayload) => {
   setRoom(room)
   message.value = `방 ${room.code}에 참가했습니다.`
+  nextTick(drawBoard)
 })
 
 socket.on('roomError', ({ message: errorMessage }: { message: string }) => {
@@ -257,6 +266,7 @@ socket.on('gameStateUpdated', ({ gameState: nextGameState }: { roomCode: string;
   if (!nextGameState.turn.pendingMoves.some((move) => move.id === selectedMoveId.value)) {
     selectedMoveId.value = nextGameState.turn.pendingMoves[0]?.id ?? ''
   }
+  nextTick(drawBoard)
 })
 
 const createRoom = () => {
@@ -315,6 +325,7 @@ const startGame = () => {
     isStarting.value = false
     setMessageFromResponse(response, '게임을 시작하지 못했습니다.')
     if (response.ok && response.gameState) gameState.value = response.gameState
+    nextTick(drawBoard)
   })
 }
 
@@ -329,6 +340,7 @@ const throwYut = () => {
     if (response.ok && response.gameState) {
       gameState.value = response.gameState
       selectedMoveId.value = response.gameState.turn.pendingMoves[0]?.id ?? ''
+      nextTick(drawBoard)
     }
   })
 }
@@ -339,7 +351,10 @@ const movePiece = (pieceId: string) => {
 
   socket.emit('movePiece', { pieceId, throwId: move.id }, (response: ServerResponse<{ gameState?: GameState }>) => {
     setMessageFromResponse(response, '말을 이동하지 못했습니다.')
-    if (response.ok && response.gameState) gameState.value = response.gameState
+    if (response.ok && response.gameState) {
+      gameState.value = response.gameState
+      nextTick(drawBoard)
+    }
   })
 }
 
@@ -357,7 +372,8 @@ const leaveRoom = () => {
 
 const getPieceKey = (piece: YutPiece) => {
   if (piece.state !== 'active') return piece.state
-  const route = gameState.value?.board.routes[piece.route] ?? []
+  // Prefer the server-sent route table, but keep a local fallback so moved pieces never lose coordinates.
+  const route = gameState.value?.board.routes?.[piece.route] ?? localRoutes[piece.route]
   return route[piece.position] ?? 'O20'
 }
 
@@ -459,17 +475,20 @@ const drawBoard = () => {
 
   const drawPiece = (piece: YutPiece, offsetX = 0, offsetY = 0, stackSize = 1) => {
     const point = getPiecePoint(piece)
+    const x = Number.isFinite(point.x) ? point.x + offsetX : pointByKey.O0!.x
+    const y = Number.isFinite(point.y) ? point.y + offsetY : pointByKey.O0!.y
+
     ctx.beginPath()
     ctx.fillStyle = getPlayerColor(piece.playerId)
     ctx.strokeStyle = piece.playerId === socket.id ? '#111827' : '#ffffff'
     ctx.lineWidth = piece.playerId === socket.id ? 4 : 3
-    ctx.arc(point.x + offsetX, point.y + offsetY, PIECE_RADIUS, 0, Math.PI * 2)
+    ctx.arc(x, y, PIECE_RADIUS, 0, Math.PI * 2)
     ctx.fill()
     ctx.stroke()
 
     ctx.fillStyle = '#ffffff'
     ctx.font = '800 11px sans-serif'
-    ctx.fillText(stackSize > 1 ? `x${stackSize}` : String(piece.index + 1), point.x + offsetX, point.y + offsetY + 4)
+    ctx.fillText(stackSize > 1 ? `x${stackSize}` : String(piece.index + 1), x, y + 4)
   }
 
   for (const piece of loosePieces) drawPiece(piece)
