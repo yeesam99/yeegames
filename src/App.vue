@@ -380,9 +380,10 @@ const getPiecePoint = (piece: YutPiece): BoardPoint => {
   }
 
   if (piece.state === 'finished') {
+    // Finished pieces also gather near the bottom-right start/finish corner.
     return {
-      x: 350 + (piece.index % 2) * 28,
-      y: 330 + Math.floor(piece.index / 2) * 28,
+      x: 632 + (piece.index % 2) * 24,
+      y: 590 + Math.floor(piece.index / 2) * 24,
     }
   }
 
@@ -439,8 +440,10 @@ const drawBoard = () => {
   ctx.fillStyle = '#121826'
   ctx.font = '700 16px sans-serif'
   ctx.textAlign = 'center'
-  ctx.fillText('완주', 350, 320)
-  ctx.fillText('대기 말', 350, 405)
+  // The start, waiting pieces, and finish area all belong near the bottom-right corner.
+  ctx.textAlign = 'left'
+  ctx.fillText('완주', 626, 566)
+  ctx.fillText('대기 말', 626, 706)
 
   const activeGroups = new Map<string, YutPiece[]>()
   const loosePieces: YutPiece[] = []
@@ -595,6 +598,10 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="header-actions">
+          <div class="room-code-badge" aria-label="방 코드">
+            <span>방 코드</span>
+            <strong>{{ currentRoomCode }}</strong>
+          </div>
           <button class="dark-button compact" type="button" :disabled="!canStartGame" @click="startGame">
             {{ isStarting ? '시작 중...' : '게임 시작' }}
           </button>
@@ -808,11 +815,18 @@ h3 {
   color: #666666;
 }
 
-.entry-actions,
-.header-actions {
+.entry-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .dark-button,
@@ -847,6 +861,29 @@ h3 {
 .compact {
   min-height: 42px;
   padding: 0 16px;
+}
+
+.room-code-badge {
+  display: grid;
+  min-height: 42px;
+  align-content: center;
+  border: 2px solid #111111;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 4px 14px;
+}
+
+.room-code-badge span {
+  color: #666666;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.room-code-badge strong {
+  color: #111111;
+  font-size: 1.05rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
 }
 
 .full {
@@ -1017,6 +1054,7 @@ button:disabled {
 
   .entry-actions,
   .header-actions {
+    display: grid;
     grid-template-columns: 1fr;
   }
 
