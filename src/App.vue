@@ -30,59 +30,56 @@ const getWinner = () => state.players.find((player) => player.id === state.winne
       <button class="reset-button" type="button" @click="resetGame">새 게임</button>
     </header>
 
-    <section class="game-layout">
-      <aside class="left-panel">
-        <PlayerPanel :players="state.players" :current-player-id="currentPlayer.id" />
+    <section class="main-layout">
+      <PlayerPanel class="player-panel" :players="state.players" :current-player-id="currentPlayer.id" />
 
-        <section class="panel log-panel">
-          <h2>로그</h2>
-          <p v-for="log in state.logs" :key="log">{{ log }}</p>
-        </section>
-      </aside>
-
-      <section class="center-panel">
-        <TurnStatus
-          :current-player="currentPlayer"
-          :phase="state.phase"
-          :message="state.message"
-          :extra-turn="state.extraTurn"
-          :captured="state.lastCaptured"
-          :winner="getWinner()"
-        />
-
-        <GameBoard
-          :players="state.players"
-          :pieces="representativePieces"
-          :movable-piece-ids="state.movablePieces"
-          :get-piece-render-position="getPieceRenderPosition"
-          @select-piece="selectPiece"
-        />
+      <section class="panel log-panel">
+        <h2>로그</h2>
+        <p v-for="log in state.logs" :key="log">{{ log }}</p>
       </section>
 
-      <aside class="right-panel">
-        <YutControls
-          :phase="state.phase"
-          :current-result="state.currentResult"
-          :disabled="state.phase !== GamePhase.IDLE || state.phase === GamePhase.GAME_OVER"
-          @roll="rollYut"
-        />
+      <TurnStatus
+        class="status-panel"
+        :current-player="currentPlayer"
+        :phase="state.phase"
+        :message="state.message"
+        :extra-turn="state.extraTurn"
+        :captured="state.lastCaptured"
+        :winner="getWinner()"
+      />
 
+      <GameBoard
+        class="board-panel"
+        :players="state.players"
+        :pieces="representativePieces"
+        :movable-piece-ids="state.movablePieces"
+        :get-piece-render-position="getPieceRenderPosition"
+        @select-piece="selectPiece"
+      />
+
+      <YutControls
+        class="control-panel"
+        :phase="state.phase"
+        :current-result="state.currentResult"
+        :disabled="state.phase !== GamePhase.IDLE || state.phase === GamePhase.GAME_OVER"
+        @roll="rollYut"
+      />
+
+      <section class="panel movable-panel">
         <RouteSelector
           :visible="state.phase === GamePhase.SELECTING_ROUTE"
           :options="state.routeOptions"
           @select="selectRoute"
         />
 
-        <section class="panel">
-          <h2>이동 가능한 말</h2>
-          <div v-if="state.movablePieces.length" class="piece-list">
-            <button v-for="pieceId in state.movablePieces" :key="pieceId" type="button" @click="selectPiece(pieceId)">
-              {{ pieceId }}
-            </button>
-          </div>
-          <p v-else class="muted">윷을 던지면 표시됩니다.</p>
-        </section>
-      </aside>
+        <h2>이동 가능한 말</h2>
+        <div v-if="state.movablePieces.length" class="piece-list">
+          <button v-for="pieceId in state.movablePieces" :key="pieceId" type="button" @click="selectPiece(pieceId)">
+            {{ pieceId }}
+          </button>
+        </div>
+        <p v-else class="muted">윷을 던지면 표시됩니다.</p>
+      </section>
     </section>
   </main>
 </template>
@@ -100,7 +97,7 @@ const getWinner = () => state.players.find((player) => player.id === state.winne
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 22px;
+  margin-bottom: 20px;
 }
 
 .brand {
@@ -136,18 +133,53 @@ const getWinner = () => state.players.find((player) => player.id === state.winne
   padding: 0 14px;
 }
 
-.game-layout {
+.main-layout {
   display: grid;
-  grid-template-columns: 260px minmax(420px, 1fr) 280px;
-  gap: 18px;
-  align-items: start;
+  grid-template-columns: 260px minmax(0, 1fr) 260px;
+  grid-template-rows: auto 1fr;
+  gap: 16px;
+  align-items: stretch;
 }
 
-.left-panel,
-.center-panel,
-.right-panel {
-  display: grid;
-  gap: 14px;
+.player-panel,
+.log-panel,
+.status-panel,
+.board-panel,
+.control-panel,
+.movable-panel {
+  width: 100%;
+  min-width: 0;
+}
+
+.player-panel {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.log-panel {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.status-panel {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.board-panel {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.control-panel {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.movable-panel {
+  grid-column: 3;
+  grid-row: 2;
+  align-content: start;
 }
 
 .panel {
@@ -165,7 +197,7 @@ p {
 }
 
 .log-panel {
-  max-height: 320px;
+  max-height: min(620px, calc(100vh - 170px));
   overflow: auto;
 }
 
@@ -187,8 +219,19 @@ p {
 }
 
 @media (max-width: 1080px) {
-  .game-layout {
+  .main-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  .player-panel,
+  .log-panel,
+  .status-panel,
+  .board-panel,
+  .control-panel,
+  .movable-panel {
+    grid-column: 1;
+    grid-row: auto;
   }
 }
 </style>
