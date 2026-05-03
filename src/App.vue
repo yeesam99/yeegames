@@ -1,6 +1,5 @@
 <script setup>
 import GameBoard from './components/GameBoard.vue'
-import PlayerPanel from './components/PlayerPanel.vue'
 import RouteSelector from './components/RouteSelector.vue'
 import TurnStatus from './components/TurnStatus.vue'
 import YutControls from './components/YutControls.vue'
@@ -18,7 +17,6 @@ const {
 } = useYutGame()
 
 const getWinner = () => state.players.find((player) => player.id === state.winner) ?? null
-
 const finishedCount = (player) => player.pieces.filter((piece) => piece.status === 'FINISHED').length
 </script>
 
@@ -33,31 +31,21 @@ const finishedCount = (player) => player.pieces.filter((piece) => piece.status =
     </header>
 
     <section class="main-layout">
-      <PlayerPanel class="left-top" :players="state.players" :current-player-id="currentPlayer.id" />
-
-      <section class="panel left-bottom">
+      <section class="panel left-panel">
         <h2>로그</h2>
         <p v-for="log in state.logs" :key="log">{{ log }}</p>
       </section>
 
-      <TurnStatus
-        class="center-top"
-        :current-player="currentPlayer"
-        :phase="state.phase"
-        :message="state.message"
-        :extra-turn="state.extraTurn"
-        :captured="state.lastCaptured"
-        :winner="getWinner()"
-      />
-
-      <GameBoard
-        class="center-bottom"
-        :players="state.players"
-        :pieces="representativePieces"
-        :movable-piece-ids="state.movablePieces"
-        :get-piece-render-position="getPieceRenderPosition"
-        @select-piece="selectPiece"
-      />
+      <section class="center-panel">
+        <GameBoard
+          class="board-container"
+          :players="state.players"
+          :pieces="representativePieces"
+          :movable-piece-ids="state.movablePieces"
+          :get-piece-render-position="getPieceRenderPosition"
+          @select-piece="selectPiece"
+        />
+      </section>
 
       <aside class="right-panel" aria-label="게임 컨트롤과 상태 요약">
         <section class="panel player-summary">
@@ -77,6 +65,16 @@ const finishedCount = (player) => player.pieces.filter((piece) => piece.status =
           <p>추가 턴: <strong>{{ state.extraTurn ? '있음' : '없음' }}</strong></p>
         </section>
 
+        <TurnStatus
+          class="compact-status"
+          :current-player="currentPlayer"
+          :phase="state.phase"
+          :message="state.message"
+          :extra-turn="state.extraTurn"
+          :captured="state.lastCaptured"
+          :winner="getWinner()"
+        />
+
         <YutControls
           class="control-panel"
           :phase="state.phase"
@@ -86,19 +84,19 @@ const finishedCount = (player) => player.pieces.filter((piece) => piece.status =
         />
 
         <section class="panel movable-panel">
-        <RouteSelector
-          :visible="state.phase === GamePhase.SELECTING_ROUTE"
-          :options="state.routeOptions"
-          @select="selectRoute"
-        />
+          <RouteSelector
+            :visible="state.phase === GamePhase.SELECTING_ROUTE"
+            :options="state.routeOptions"
+            @select="selectRoute"
+          />
 
-        <h2>이동 가능한 말</h2>
-        <div v-if="state.movablePieces.length" class="piece-list">
-          <button v-for="pieceId in state.movablePieces" :key="pieceId" type="button" @click="selectPiece(pieceId)">
-            {{ pieceId }}
-          </button>
-        </div>
-        <p v-else class="muted">윷을 던지면 표시됩니다.</p>
+          <h2>이동 가능한 말</h2>
+          <div v-if="state.movablePieces.length" class="piece-list">
+            <button v-for="pieceId in state.movablePieces" :key="pieceId" type="button" @click="selectPiece(pieceId)">
+              {{ pieceId }}
+            </button>
+          </div>
+          <p v-else class="muted">윷을 던지면 표시됩니다.</p>
         </section>
       </aside>
     </section>
@@ -156,45 +154,40 @@ const finishedCount = (player) => player.pieces.filter((piece) => piece.status =
 
 .main-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 300px;
-  grid-template-rows: auto 1fr;
+  min-height: calc(100vh - 78px);
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
+  grid-template-rows: 1fr;
   gap: 16px;
   align-items: stretch;
 }
 
-.left-top,
-.left-bottom,
-.center-top,
-.center-bottom,
+.left-panel,
+.center-panel,
 .right-panel {
   width: 100%;
   min-width: 0;
 }
 
-.left-top {
+.left-panel {
   grid-column: 1;
-  grid-row: 1;
+  overflow-y: auto;
 }
 
-.left-bottom {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.center-top {
+.center-panel {
+  display: flex;
   grid-column: 2;
-  grid-row: 1;
+  align-items: center;
+  justify-content: center;
 }
 
-.center-bottom {
-  grid-column: 2;
-  grid-row: 2;
+.board-container {
+  width: 80%;
+  max-width: 780px;
 }
 
 .right-panel {
-  grid-column: 3;
-  grid-row: 1 / span 2;
   display: flex;
+  grid-column: 3;
   max-height: calc(100vh - 88px);
   flex-direction: column;
   gap: 12px;
@@ -215,12 +208,7 @@ p {
   margin: 0;
 }
 
-.left-bottom {
-  max-height: min(620px, calc(100vh - 170px));
-  overflow: auto;
-}
-
-.left-bottom p {
+.left-panel p {
   border-bottom: 1px solid #e5e7eb;
   padding-bottom: 8px;
   font-size: 0.9rem;
@@ -270,13 +258,14 @@ p {
     grid-template-rows: none;
   }
 
-  .left-top,
-  .left-bottom,
-  .center-top,
-  .center-bottom,
+  .left-panel,
+  .center-panel,
   .right-panel {
     grid-column: 1;
-    grid-row: auto;
+  }
+
+  .board-container {
+    width: 100%;
   }
 
   .right-panel {
