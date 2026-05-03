@@ -1,5 +1,7 @@
 import { computed, reactive } from 'vue'
 import {
+  FINISHED_POSITION,
+  START_GOAL,
   finishedOrigin,
   getBranchOptions,
   getPoint,
@@ -8,7 +10,7 @@ import {
   waitingOffsets,
   waitingOrigins,
 } from '../utils/boardRoutes'
-import { isBackdo, rollYutResult, shouldGrantExtraTurn } from '../utils/yutRules'
+import { isBackdo, isForwardMove, rollYutResult, shouldGrantExtraTurn } from '../utils/yutRules'
 
 export const GamePhase = {
   IDLE: 'IDLE',
@@ -128,6 +130,12 @@ export const useYutGame = () => {
 
     if (isBackdo(result)) {
       if (piece.status !== PieceStatus.PLAYING) return { finished: false, position: null, route: 'outer' }
+      // START_GOAL is on the board. Backdo from this cell moves to the previous
+      // outer cell and never finishes the piece.
+      if (piece.position === START_GOAL) {
+        return { finished: false, position: 19, route: 'outer' }
+      }
+
       if (piece.route !== 'outer') {
         const route = routes[piece.route] ?? routes.outer
         const index = getRouteIndex(piece.route, piece.position)
@@ -135,8 +143,15 @@ export const useYutGame = () => {
       }
 
       const outerIndex = getRouteIndex('outer', piece.position)
-      if (outerIndex <= 1) return { finished: false, position: null, route: 'outer', waiting: true }
+      // First step -> backdo returns to START_GOAL, not WAITING and not FINISHED.
+      if (outerIndex <= 1) return { finished: false, position: START_GOAL, route: 'outer' }
       return { finished: false, position: routes.outer[outerIndex - 1], route: 'outer' }
+    }
+
+    // A PLAYING piece on START_GOAL exits the board only when it begins a
+    // positive move from START_GOAL. Reaching START_GOAL itself is not finish.
+    if (piece.status === PieceStatus.PLAYING && piece.position === START_GOAL && isForwardMove(result)) {
+      return { finished: true, position: FINISHED_POSITION, route: piece.route || 'outer' }
     }
 
     const routeName = piece.status === PieceStatus.WAITING ? 'outer' : getRouteForMove(piece, selectedRoute)
@@ -145,7 +160,9 @@ export const useYutGame = () => {
     const safeStartIndex = startIndex < 0 ? getRouteIndex('outer', piece.position) : startIndex
     const nextIndex = safeStartIndex + result.steps
 
-    if (nextIndex >= route.length - 1) return { finished: true, position: 'FINISHED', route: routeName }
+    // Passing or reaching the route end places the piece on START_GOAL. It
+    // remains PLAYING until a later positive move exits the board.
+    if (nextIndex >= route.length - 1) return { finished: false, position: START_GOAL, route: routeName }
     return { finished: false, position: route[nextIndex], route: routeName }
   }
 
@@ -222,11 +239,8 @@ export const useYutGame = () => {
       movingPiece.route = destination.route
 
       if (destination.finished) {
-        movingPiece.position = 'FINISHED'
+        movingPiece.position = FINISHED_POSITION
         movingPiece.status = PieceStatus.FINISHED
-      } else if (destination.waiting) {
-        movingPiece.position = null
-        movingPiece.status = PieceStatus.WAITING
       } else {
         movingPiece.position = destination.position
         movingPiece.status = PieceStatus.PLAYING

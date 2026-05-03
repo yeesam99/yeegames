@@ -18,5 +18,6 @@ export const rollYutResult = () => {
 }
 
 export const isBackdo = (result) => result?.steps === -1
+export const isForwardMove = (result) => Number(result?.steps) > 0
 
 export const shouldGrantExtraTurn = ({ result, captured }) => Boolean(result?.extraTurn || captured)
