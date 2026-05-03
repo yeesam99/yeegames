@@ -18,6 +18,8 @@ const {
 } = useYutGame()
 
 const getWinner = () => state.players.find((player) => player.id === state.winner) ?? null
+
+const finishedCount = (player) => player.pieces.filter((piece) => piece.status === 'FINISHED').length
 </script>
 
 <template>
@@ -31,15 +33,15 @@ const getWinner = () => state.players.find((player) => player.id === state.winne
     </header>
 
     <section class="main-layout">
-      <PlayerPanel class="player-panel" :players="state.players" :current-player-id="currentPlayer.id" />
+      <PlayerPanel class="left-top" :players="state.players" :current-player-id="currentPlayer.id" />
 
-      <section class="panel log-panel">
+      <section class="panel left-bottom">
         <h2>로그</h2>
         <p v-for="log in state.logs" :key="log">{{ log }}</p>
       </section>
 
       <TurnStatus
-        class="status-panel"
+        class="center-top"
         :current-player="currentPlayer"
         :phase="state.phase"
         :message="state.message"
@@ -49,7 +51,7 @@ const getWinner = () => state.players.find((player) => player.id === state.winne
       />
 
       <GameBoard
-        class="board-panel"
+        class="center-bottom"
         :players="state.players"
         :pieces="representativePieces"
         :movable-piece-ids="state.movablePieces"
@@ -57,15 +59,33 @@ const getWinner = () => state.players.find((player) => player.id === state.winne
         @select-piece="selectPiece"
       />
 
-      <YutControls
-        class="control-panel"
-        :phase="state.phase"
-        :current-result="state.currentResult"
-        :disabled="state.phase !== GamePhase.IDLE || state.phase === GamePhase.GAME_OVER"
-        @roll="rollYut"
-      />
+      <aside class="right-panel" aria-label="게임 컨트롤과 상태 요약">
+        <section class="panel player-summary">
+          <h2>플레이어 요약</h2>
+          <article v-for="player in state.players" :key="player.id" class="summary-row" :class="{ active: player.id === currentPlayer.id }">
+            <span class="color-dot" :style="{ background: player.color }"></span>
+            <strong>{{ player.name }}</strong>
+            <em>{{ finishedCount(player) }} / 4</em>
+          </article>
+        </section>
 
-      <section class="panel movable-panel">
+        <section class="panel status-summary">
+          <h2>상태 요약</h2>
+          <p>현재 턴: <strong>{{ currentPlayer.name }}</strong></p>
+          <p>게임 상태: <strong>{{ state.phase }}</strong></p>
+          <p>윷 결과: <strong>{{ state.currentResult?.label ?? '-' }}</strong></p>
+          <p>추가 턴: <strong>{{ state.extraTurn ? '있음' : '없음' }}</strong></p>
+        </section>
+
+        <YutControls
+          class="control-panel"
+          :phase="state.phase"
+          :current-result="state.currentResult"
+          :disabled="state.phase !== GamePhase.IDLE || state.phase === GamePhase.GAME_OVER"
+          @roll="rollYut"
+        />
+
+        <section class="panel movable-panel">
         <RouteSelector
           :visible="state.phase === GamePhase.SELECTING_ROUTE"
           :options="state.routeOptions"
@@ -79,7 +99,8 @@ const getWinner = () => state.players.find((player) => player.id === state.winne
           </button>
         </div>
         <p v-else class="muted">윷을 던지면 표시됩니다.</p>
-      </section>
+        </section>
+      </aside>
     </section>
   </main>
 </template>
@@ -135,51 +156,49 @@ const getWinner = () => state.players.find((player) => player.id === state.winne
 
 .main-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 260px;
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
   grid-template-rows: auto 1fr;
   gap: 16px;
   align-items: stretch;
 }
 
-.player-panel,
-.log-panel,
-.status-panel,
-.board-panel,
-.control-panel,
-.movable-panel {
+.left-top,
+.left-bottom,
+.center-top,
+.center-bottom,
+.right-panel {
   width: 100%;
   min-width: 0;
 }
 
-.player-panel {
+.left-top {
   grid-column: 1;
   grid-row: 1;
 }
 
-.log-panel {
+.left-bottom {
   grid-column: 1;
   grid-row: 2;
 }
 
-.status-panel {
+.center-top {
   grid-column: 2;
   grid-row: 1;
 }
 
-.board-panel {
+.center-bottom {
   grid-column: 2;
   grid-row: 2;
 }
 
-.control-panel {
+.right-panel {
   grid-column: 3;
-  grid-row: 1;
-}
-
-.movable-panel {
-  grid-column: 3;
-  grid-row: 2;
-  align-content: start;
+  grid-row: 1 / span 2;
+  display: flex;
+  max-height: calc(100vh - 88px);
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
 }
 
 .panel {
@@ -196,12 +215,12 @@ p {
   margin: 0;
 }
 
-.log-panel {
+.left-bottom {
   max-height: min(620px, calc(100vh - 170px));
   overflow: auto;
 }
 
-.log-panel p {
+.left-bottom p {
   border-bottom: 1px solid #e5e7eb;
   padding-bottom: 8px;
   font-size: 0.9rem;
@@ -214,6 +233,33 @@ p {
   gap: 8px;
 }
 
+.summary-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 2px solid #111111;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.summary-row.active {
+  background: #f4f4f5;
+}
+
+.summary-row em {
+  color: #666666;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.color-dot {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #111111;
+  border-radius: 999px;
+}
+
 .muted {
   color: #666666;
 }
@@ -224,14 +270,18 @@ p {
     grid-template-rows: none;
   }
 
-  .player-panel,
-  .log-panel,
-  .status-panel,
-  .board-panel,
-  .control-panel,
-  .movable-panel {
+  .left-top,
+  .left-bottom,
+  .center-top,
+  .center-bottom,
+  .right-panel {
     grid-column: 1;
     grid-row: auto;
+  }
+
+  .right-panel {
+    max-height: none;
+    overflow: visible;
   }
 }
 </style>
