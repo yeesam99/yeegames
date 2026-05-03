@@ -238,11 +238,11 @@ io.on('connection', (socket) => {
       player.socketId = socket.id
       player.nickname = sanitizeText(nickname, player.nickname)
       player.connected = true
+      socket.join(room.id)
+      emitRoom(room)
     }
 
-    socket.join(room.id)
     socket.emit('room:updated', { room: publicRoom(room) })
-    emitRoom(room)
   })
 
   socket.on('disconnect', () => {

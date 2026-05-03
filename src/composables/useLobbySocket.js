@@ -38,7 +38,9 @@ export const useLobbySocket = () => {
     socket.on('room:updated', ({ room }) => {
       errorMessage.value = ''
       currentRoom.value = room
-      rooms.value = rooms.value.map((item) => (item.id === room.id ? room : item))
+      rooms.value = rooms.value.some((item) => item.id === room.id)
+        ? rooms.value.map((item) => (item.id === room.id ? room : item))
+        : [room, ...rooms.value]
     })
 
     socket.on('room:error', ({ message }) => {
