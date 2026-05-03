@@ -133,7 +133,7 @@ export const useYutGame = () => {
       // START_GOAL is on the board. Backdo from this cell moves to the previous
       // outer cell and never finishes the piece.
       if (piece.position === START_GOAL) {
-        return { finished: false, position: 19, route: 'outer' }
+        return { finished: false, position: routes.outer[routes.outer.length - 2], route: 'outer' }
       }
 
       if (piece.route !== 'outer') {
