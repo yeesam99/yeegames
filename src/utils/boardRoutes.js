@@ -1,66 +1,83 @@
-export const BOARD_SIZE = 720
+export const BOARD_SIZE = 100
 
-export const boardPoints = {
-  0: { id: 0, x: 610, y: 610, label: '출발/도착' },
-  1: { id: 1, x: 610, y: 500 },
-  2: { id: 2, x: 610, y: 390 },
-  3: { id: 3, x: 610, y: 280 },
-  4: { id: 4, x: 610, y: 170 },
-  5: { id: 5, x: 610, y: 90, branchOptions: ['shortcutA'] },
-  6: { id: 6, x: 500, y: 90 },
-  7: { id: 7, x: 390, y: 90 },
-  8: { id: 8, x: 280, y: 90 },
-  9: { id: 9, x: 170, y: 90 },
-  10: { id: 10, x: 90, y: 90, branchOptions: ['shortcutB'] },
-  11: { id: 11, x: 90, y: 200 },
-  12: { id: 12, x: 90, y: 310 },
-  13: { id: 13, x: 90, y: 420 },
-  14: { id: 14, x: 90, y: 530 },
-  15: { id: 15, x: 90, y: 610 },
-  16: { id: 16, x: 200, y: 610 },
-  17: { id: 17, x: 310, y: 610 },
-  18: { id: 18, x: 420, y: 610 },
-  19: { id: 19, x: 530, y: 610 },
-  20: { id: 20, x: 610, y: 610, label: '도착' },
-  21: { id: 21, x: 550, y: 160 },
-  22: { id: 22, x: 450, y: 260 },
-  23: { id: 23, x: 350, y: 350, label: '중앙' },
-  24: { id: 24, x: 450, y: 450 },
-  25: { id: 25, x: 160, y: 160 },
-  26: { id: 26, x: 260, y: 260 },
-}
+// Single source of truth for every visual board coordinate.
+// x/y are percentages inside a square board. Every cell, line, and piece uses
+// these exact values, then CSS centers elements with translate(-50%, -50%).
+export const boardPoints = [
+  // Outer route: start at bottom-right, then move along the square border.
+  { id: 0, x: 90, y: 90, type: 'start', routes: ['outer'] },
+  { id: 1, x: 72, y: 90, type: 'normal', routes: ['outer'] },
+  { id: 2, x: 54, y: 90, type: 'normal', routes: ['outer'] },
+  { id: 3, x: 36, y: 90, type: 'normal', routes: ['outer'] },
+  { id: 4, x: 18, y: 90, type: 'normal', routes: ['outer'] },
+  { id: 5, x: 10, y: 90, type: 'corner', routes: ['outer', 'shortcutB'] },
+  { id: 6, x: 10, y: 72, type: 'normal', routes: ['outer'] },
+  { id: 7, x: 10, y: 54, type: 'normal', routes: ['outer'] },
+  { id: 8, x: 10, y: 36, type: 'normal', routes: ['outer'] },
+  { id: 9, x: 10, y: 18, type: 'normal', routes: ['outer'] },
+  { id: 10, x: 10, y: 10, type: 'corner', routes: ['outer', 'shortcutA'], branchOptions: ['shortcutA'] },
+  { id: 11, x: 28, y: 10, type: 'normal', routes: ['outer'] },
+  { id: 12, x: 46, y: 10, type: 'normal', routes: ['outer'] },
+  { id: 13, x: 64, y: 10, type: 'normal', routes: ['outer'] },
+  { id: 14, x: 82, y: 10, type: 'normal', routes: ['outer'] },
+  { id: 15, x: 90, y: 10, type: 'corner', routes: ['outer', 'shortcutB'], branchOptions: ['shortcutB'] },
+  { id: 16, x: 90, y: 28, type: 'normal', routes: ['outer'] },
+  { id: 17, x: 90, y: 46, type: 'normal', routes: ['outer'] },
+  { id: 18, x: 90, y: 64, type: 'normal', routes: ['outer'] },
+  { id: 19, x: 90, y: 82, type: 'normal', routes: ['outer'] },
+
+  // Center and diagonal shortcut cells.
+  { id: 20, x: 50, y: 50, type: 'center', routes: ['shortcutA', 'shortcutB', 'center'] },
+  { id: 21, x: 25, y: 25, type: 'shortcut', routes: ['shortcutA'] },
+  { id: 22, x: 37.5, y: 37.5, type: 'shortcut', routes: ['shortcutA'] },
+  { id: 23, x: 62.5, y: 62.5, type: 'shortcut', routes: ['shortcutA', 'center'] },
+  { id: 24, x: 75, y: 75, type: 'shortcut', routes: ['shortcutA', 'center'] },
+  { id: 25, x: 75, y: 25, type: 'shortcut', routes: ['shortcutB'] },
+  { id: 26, x: 62.5, y: 37.5, type: 'shortcut', routes: ['shortcutB'] },
+  { id: 27, x: 37.5, y: 62.5, type: 'shortcut', routes: ['shortcutB'] },
+  { id: 28, x: 25, y: 75, type: 'shortcut', routes: ['shortcutB'] },
+]
+
+export const boardPointMap = Object.fromEntries(boardPoints.map((point) => [point.id, point]))
 
 export const routes = {
-  outer: Array.from({ length: 21 }, (_item, index) => index),
-  shortcutA: [5, 21, 22, 23, 24, 20],
-  shortcutB: [10, 25, 26, 23, 24, 20],
-  center: [23, 24, 20],
+  // Duplicate 0 at the end so reaching/passing the last index can mean FINISHED.
+  outer: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 0],
+  // Left-top corner -> center -> bottom-right home.
+  shortcutA: [10, 21, 22, 20, 23, 24, 0],
+  // Right-top corner -> center -> left-bottom -> bottom side -> bottom-right home.
+  shortcutB: [15, 25, 26, 20, 27, 28, 5, 4, 3, 2, 1, 0],
+  center: [20, 23, 24, 0],
 }
 
-export const routeLines = [routes.outer, routes.shortcutA, routes.shortcutB]
+export const routeLines = [
+  routes.outer,
+  [10, 21, 22, 20, 23, 24, 0],
+  [15, 25, 26, 20, 27, 28, 5],
+]
 
 export const waitingOrigins = {
-  1: { x: 638, y: 646 },
-  2: { x: 638, y: 584 },
+  1: { x: 94, y: 96 },
+  2: { x: 94, y: 86 },
 }
 
 export const waitingOffsets = [
   { x: 0, y: 0 },
-  { x: 18, y: 0 },
-  { x: 0, y: 18 },
-  { x: 18, y: 18 },
+  { x: 3, y: 0 },
+  { x: 0, y: 3 },
+  { x: 3, y: 3 },
 ]
 
 export const finishedOrigin = {
-  1: { x: 560, y: 642 },
-  2: { x: 560, y: 580 },
+  1: { x: 80, y: 96 },
+  2: { x: 80, y: 86 },
 }
 
-export const getPoint = (position) => boardPoints[position] ?? boardPoints[0]
+export const getPoint = (position) => boardPointMap[position] ?? boardPointMap[0]
 
 export const getRouteIndex = (routeName, position) => {
   const route = routes[routeName] ?? routes.outer
   return route.indexOf(position)
 }
 
-export const getBranchOptions = (position) => boardPoints[position]?.branchOptions ?? []
+export const getBranchOptions = (position) => boardPointMap[position]?.branchOptions ?? []

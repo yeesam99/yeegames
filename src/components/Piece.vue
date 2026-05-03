@@ -30,18 +30,34 @@ defineEmits(['select'])
 </script>
 
 <template>
-  <g class="piece" :class="{ selectable }" @click.stop="$emit('select', piece.id)">
-    <circle v-if="selectable" :cx="x" :cy="y" r="23" class="piece-ring" />
-    <circle :cx="x" :cy="y" r="15" class="piece-body" :fill="color" />
-    <text :x="x" :y="y + 5" text-anchor="middle" class="piece-label">
+  <button
+    class="piece"
+    :class="{ selectable }"
+    type="button"
+    :style="{ left: `${x}%`, top: `${y}%`, '--piece-color': color }"
+    :aria-label="`${piece.id} 말`"
+    @click.stop="$emit('select', piece.id)"
+  >
+    <span class="piece-ring" aria-hidden="true"></span>
+    <span class="piece-body">
       {{ stackCount > 1 ? `x${stackCount}` : piece.number }}
-    </text>
-  </g>
+    </span>
+  </button>
 </template>
 
 <style scoped>
 .piece {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  background: transparent;
   cursor: default;
+  padding: 0;
+  transform: translate(-50%, -50%);
 }
 
 .piece.selectable {
@@ -49,20 +65,31 @@ defineEmits(['select'])
 }
 
 .piece-ring {
-  fill: rgba(17, 17, 17, 0.08);
-  stroke: #111111;
-  stroke-width: 2;
+  position: absolute;
+  inset: -8px;
+  border: 2px solid #111111;
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.08);
+  opacity: 0;
+}
+
+.piece.selectable .piece-ring {
+  opacity: 1;
 }
 
 .piece-body {
-  stroke: #111111;
-  stroke-width: 3;
-}
-
-.piece-label {
-  fill: #ffffff;
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 3px solid #111111;
+  border-radius: 999px;
+  background: var(--piece-color);
+  color: #ffffff;
   font-size: 12px;
-  font-weight: 900;
-  pointer-events: none;
+  font-weight: 950;
+  line-height: 1;
 }
 </style>

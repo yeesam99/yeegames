@@ -25,31 +25,44 @@ defineEmits(['select-piece'])
 
 const getPlayerColor = (players, playerId) => players.find((player) => player.id === playerId)?.color ?? '#111111'
 
-const pointFor = (pointId) => boardPoints[pointId]
+const pointFor = (pointId) => boardPoints.find((point) => point.id === pointId)
+
+const toPolylinePoints = (route) =>
+  route
+    .map(pointFor)
+    .filter(Boolean)
+    .map((point) => `${point.x},${point.y}`)
+    .join(' ')
 </script>
 
 <template>
-  <section class="board-wrap">
-    <svg class="board" :viewBox="`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`" role="img" aria-label="윷놀이 판">
-      <rect x="1" y="1" :width="BOARD_SIZE - 2" :height="BOARD_SIZE - 2" rx="18" fill="#fffaf0" stroke="#111111" stroke-width="2" />
+  <section class="board-wrap" aria-label="윷놀이 판">
+    <div class="board">
+      <svg class="board-lines" :viewBox="`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`" aria-hidden="true">
+        <polyline
+          v-for="(route, index) in routeLines"
+          :key="index"
+          :points="toPolylinePoints(route)"
+          fill="none"
+          :stroke="index === 0 ? '#1f2937' : '#8b5cf6'"
+          :stroke-width="index === 0 ? 1.25 : 0.85"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
 
-      <polyline
-        v-for="(route, index) in routeLines"
-        :key="index"
-        :points="route.map((pointId) => `${pointFor(pointId).x},${pointFor(pointId).y}`).join(' ')"
-        fill="none"
-        :stroke="index === 0 ? '#1f2937' : '#8b5cf6'"
-        :stroke-width="index === 0 ? 5 : 3"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
+      <div
+        v-for="point in boardPoints"
+        :key="point.id"
+        class="board-cell"
+        :class="point.type"
+        :style="{ left: `${point.x}%`, top: `${point.y}%` }"
+        :title="String(point.id)"
+      >
+        <span v-if="point.type === 'start'" class="cell-label">출발</span>
+      </div>
 
-      <g v-for="point in boardPoints" :key="point.id">
-        <circle :cx="point.x" :cy="point.y" :r="point.id === 23 ? 22 : 18" fill="#ffffff" stroke="#111111" stroke-width="3" />
-      </g>
-
-      <text x="584" y="552" class="board-label">완주</text>
-      <text x="640" y="704" class="board-label">대기</text>
+      <span class="waiting-label">대기</span>
 
       <Piece
         v-for="piece in pieces"
@@ -62,7 +75,7 @@ const pointFor = (pointId) => boardPoints[pointId]
         :selectable="movablePieceIds.includes(piece.id)"
         @select="$emit('select-piece', $event)"
       />
-    </svg>
+    </div>
   </section>
 </template>
 
@@ -75,14 +88,64 @@ const pointFor = (pointId) => boardPoints[pointId]
 }
 
 .board {
-  display: block;
+  position: relative;
   width: 100%;
   aspect-ratio: 1;
+  min-height: 320px;
 }
 
-.board-label {
-  fill: #111111;
-  font-size: 16px;
-  font-weight: 900;
+.board-lines {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+}
+
+.board-cell {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 3px solid #111827;
+  border-radius: 999px;
+  background: #ffffff;
+  transform: translate(-50%, -50%);
+}
+
+.board-cell.corner,
+.board-cell.start {
+  width: 42px;
+  height: 42px;
+  border-width: 4px;
+}
+
+.board-cell.center {
+  width: 46px;
+  height: 46px;
+  background: #ede9fe;
+  border-width: 4px;
+}
+
+.board-cell.shortcut {
+  width: 32px;
+  height: 32px;
+}
+
+.cell-label {
+  color: #111827;
+  font-size: 9px;
+  font-weight: 950;
+}
+
+.waiting-label {
+  position: absolute;
+  right: 2.5%;
+  bottom: 0.8%;
+  color: #111827;
+  font-size: 0.78rem;
+  font-weight: 950;
 }
 </style>
