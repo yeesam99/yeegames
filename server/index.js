@@ -72,11 +72,11 @@ const findPlayer = (room, userId) => room.players.find((player) => player.userId
 const canStartRoom = (room, userId) => {
   if (room.hostUserId !== userId) return { ok: false, message: '방장만 게임을 시작할 수 있습니다.' }
   if (room.status !== 'WAITING') return { ok: false, message: '대기 중인 방만 시작할 수 있습니다.' }
-  if (room.players.length < 2) return { ok: false, message: '최소 2명 이상 필요합니다.' }
+  if (room.players.length < 2) return { ok: false, message: '2명 이상이어야 시작할 수 있습니다.' }
   if (room.players.length > 5) return { ok: false, message: '최대 5명까지 가능합니다.' }
 
   const notReady = room.players.filter((player) => player.userId !== room.hostUserId && !player.ready)
-  if (notReady.length > 0) return { ok: false, message: '아직 준비하지 않은 플레이어가 있습니다.' }
+  if (notReady.length > 0) return { ok: false, message: '모든 참가자가 준비해야 합니다.' }
 
   return { ok: true }
 }
@@ -136,8 +136,8 @@ io.on('connection', (socket) => {
 
     rooms.set(room.id, room)
     socket.join(room.id)
+    socket.emit('room:updated', { room: publicRoom(room) })
     emitRooms()
-    emitRoom(room)
   })
 
   socket.on('room:join', ({ roomId, userId, nickname } = {}) => {
@@ -198,8 +198,19 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId)
     if (!room) return emitError(socket, '존재하지 않는 방입니다.')
 
+    console.log('[room:ready]', {
+      roomId,
+      userId,
+      players: room.players.map((player) => player.userId),
+    })
+
     const player = findPlayer(room, userId)
     if (!player) return emitError(socket, '방 참가자가 아닙니다.')
+
+    if (room.hostUserId === userId) {
+      socket.emit('room:updated', { room: publicRoom(room) })
+      return
+    }
 
     player.ready = Boolean(ready)
     emitRoom(room)
@@ -218,12 +229,20 @@ io.on('connection', (socket) => {
     emitRooms()
   })
 
-  socket.on('room:get', ({ roomId } = {}) => {
+  socket.on('room:get', ({ roomId, userId, nickname } = {}) => {
     const room = rooms.get(roomId)
     if (!room) return emitError(socket, '존재하지 않는 방입니다.')
 
+    const player = findPlayer(room, userId)
+    if (player) {
+      player.socketId = socket.id
+      player.nickname = sanitizeText(nickname, player.nickname)
+      player.connected = true
+    }
+
     socket.join(room.id)
     socket.emit('room:updated', { room: publicRoom(room) })
+    emitRoom(room)
   })
 
   socket.on('disconnect', () => {

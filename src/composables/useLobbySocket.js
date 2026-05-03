@@ -36,6 +36,7 @@ export const useLobbySocket = () => {
     })
 
     socket.on('room:updated', ({ room }) => {
+      errorMessage.value = ''
       currentRoom.value = room
       rooms.value = rooms.value.map((item) => (item.id === room.id ? room : item))
     })
@@ -67,6 +68,7 @@ export const useLobbySocket = () => {
   }
 
   const createRoom = ({ name, maxPlayers }) => {
+    connect()
     errorMessage.value = ''
     socket.emit('room:create', {
       name,
@@ -77,9 +79,9 @@ export const useLobbySocket = () => {
   }
 
   const joinRoom = (roomId) => {
+    connect()
     errorMessage.value = ''
     socket.emit('room:join', { roomId, userId: userId.value, nickname: nickname.value })
-    router.push(`/room/${roomId}`)
   }
 
   const leaveRoom = (roomId) => {
@@ -89,16 +91,18 @@ export const useLobbySocket = () => {
   }
 
   const setReady = (roomId, ready) => {
+    connect()
     socket.emit('room:ready', { roomId, userId: userId.value, ready })
   }
 
   const startGame = (roomId) => {
+    connect()
     socket.emit('room:startGame', { roomId, userId: userId.value })
   }
 
   const getRoom = (roomId) => {
     connect()
-    socket.emit('room:get', { roomId })
+    socket.emit('room:get', { roomId, userId: userId.value, nickname: nickname.value })
   }
 
   onBeforeUnmount(() => {
