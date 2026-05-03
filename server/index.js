@@ -5,12 +5,12 @@ import { Server } from 'socket.io'
 import { v4 as uuidv4 } from 'uuid'
 
 const PORT = process.env.PORT || 4000
-const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:3000', 'https://yeegames.vercel.app']
-const ALLOWED_ORIGINS = process.env.CLIENT_ORIGIN
+const allowedOrigins = ['http://localhost:5173', 'http://localhost:3000', 'https://yeegames.vercel.app']
+const corsOrigins = process.env.CLIENT_ORIGIN
   ? process.env.CLIENT_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
-  : DEFAULT_ALLOWED_ORIGINS
+  : allowedOrigins
 const corsOptions = {
-  origin: ALLOWED_ORIGINS,
+  origin: corsOrigins,
   credentials: true,
 }
 
@@ -18,7 +18,7 @@ const app = express()
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: corsOrigins,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -240,10 +240,14 @@ io.on('connection', (socket) => {
   })
 })
 
+app.get('/', (_req, res) => {
+  res.send('Yut Socket Server OK')
+})
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true, rooms: rooms.size })
 })
 
 httpServer.listen(PORT, () => {
-  console.log(`Lobby Socket.IO server listening on http://localhost:${PORT}`)
+  console.log(`Socket.IO server running on port ${PORT}`)
 })

@@ -40,3 +40,42 @@ npm run dev
 ```sh
 npm run build
 ```
+
+## Socket.IO Server Deployment on Render
+
+The Vue frontend runs on Vercel, but the Socket.IO server must run as a separate Node.js web service.
+
+Render Web Service settings:
+
+- Language: Node
+- Root Directory: `server`
+- Build Command: `npm install`
+- Start Command: `npm start`
+
+The Render UI may show `server/ $ npm start` when the root directory is set to `server`. Enter only `npm start` as the start command.
+
+After deployment, open the Render URL in a browser:
+
+```text
+https://yeegames.onrender.com
+```
+
+If the server is running, the page should show:
+
+```text
+Yut Socket Server OK
+```
+
+Then set this Vercel environment variable for the frontend:
+
+```env
+VITE_SOCKET_URL=https://yeegames.onrender.com
+```
+
+Redeploy the Vercel project after changing the environment variable.
+
+Notes:
+
+- `localhost:4000` is only for local development.
+- The deployed frontend must use the Render URL in `VITE_SOCKET_URL`.
+- Render free instances can sleep after inactivity, so the first request may be slow.
