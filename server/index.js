@@ -5,18 +5,26 @@ import { Server } from 'socket.io'
 import { v4 as uuidv4 } from 'uuid'
 
 const PORT = process.env.PORT || 4000
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || '*'
+const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:3000', 'https://yeegames.vercel.app']
+const ALLOWED_ORIGINS = process.env.CLIENT_ORIGIN
+  ? process.env.CLIENT_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean)
+  : DEFAULT_ALLOWED_ORIGINS
+const corsOptions = {
+  origin: ALLOWED_ORIGINS,
+  credentials: true,
+}
 
 const app = express()
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
   cors: {
-    origin: CLIENT_ORIGIN,
+    origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST'],
+    credentials: true,
   },
 })
 
-app.use(cors({ origin: CLIENT_ORIGIN }))
+app.use(cors(corsOptions))
 app.use(express.json())
 
 const rooms = new Map()
@@ -74,6 +82,8 @@ const canStartRoom = (room, userId) => {
 }
 
 io.on('connection', (socket) => {
+  console.log(`client connected: ${socket.id}`)
+
   socket.data.userId = null
   socket.data.nickname = null
 
@@ -217,6 +227,8 @@ io.on('connection', (socket) => {
   })
 
   socket.on('disconnect', () => {
+    console.log(`client disconnected: ${socket.id}`)
+
     for (const room of rooms.values()) {
       const player = room.players.find((item) => item.socketId === socket.id)
       if (!player) continue
